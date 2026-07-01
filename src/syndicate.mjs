@@ -21,6 +21,7 @@ async function main() {
   if (command === "pull") await pullArticles();
   else if (command === "export") await exportAllPlatformDrafts();
   else if (command === "queue") await createPostingQueue(parseArgs(process.argv.slice(3)));
+  else if (command === "draft") await createDraftFromArgs(parseArgs(process.argv.slice(3)));
   else if (command === "schedule") await runScheduler();
   else if (command === "all") {
     await pullArticles();
@@ -309,15 +310,31 @@ async function createPostingQueue(options) {
   console.log(`Added ${entries.length} ${options.action || "manual"} ${platform} queue item(s) to ${CALENDAR_FILE}`);
 }
 
+async function createDraftFromArgs(options) {
+  const platform = options.platform || "devto";
+  if (platform !== "devto") {
+    throw new Error("Direct API drafting is currently only available for DEV.to.");
+  }
+  if (!options.slug) {
+    throw new Error("Missing --slug for draft command.");
+  }
+  const article = await loadArticle(options.slug);
+  await exportPlatformDrafts(article);
+  const result = await createDevtoDraft(article);
+  console.log(JSON.stringify(result, null, 2));
+  if (result.status === "failed") process.exitCode = 1;
+}
+
 async function exportPlatformDrafts(article) {
   const platformsDir = join(article.dir, "platforms");
   await mkdir(platformsDir, { recursive: true });
   const body = stripExistingCanonical(article.markdown);
+  const devtoBody = await prepareDevtoBody(article, body);
 
   const exports = {
     medium: mediumDraft(article, body),
     tumblr: tumblrDraft(article, body),
-    devto: devtoDraft(article, body),
+    devto: devtoDraft(article, devtoBody),
     hashnode: hashnodeDraft(article, body),
     forem: foremDraft(article, body)
   };
@@ -467,6 +484,7 @@ async function createDevtoDraft(article) {
     };
   }
 
+  const bodyMarkdown = await prepareDevtoBody(article, stripExistingCanonical(article.markdown));
   const response = await fetch("https://dev.to/api/articles", {
     method: "POST",
     headers: {
@@ -478,7 +496,7 @@ async function createDevtoDraft(article) {
       article: {
         title: article.meta.title,
         published: false,
-        body_markdown: stripExistingCanonical(article.markdown) + canonicalLink(article),
+        body_markdown: bodyMarkdown + canonicalLink(article),
         canonical_url: article.meta.originalUrl,
         description: article.meta.excerpt,
         tags: devtoTags(article)
@@ -507,6 +525,35 @@ async function createDevtoDraft(article) {
     id: body?.id || ""
   };
 }
+
+async function prepareDevtoBody(article, body) {
+  const imageMatches = [...body.matchAll(/!\[([^\]]*)\]\(([^)]+\.webp)\)/gi)];
+  let nextBody = body;
+  for (const match of imageMatches) {
+    const [fullMatch, alt, imagePath] = match;
+    const sourceUrl = resolveArticleImageUrl(article, imagePath);
+    if (!sourceUrl) continue;
+    nextBody = nextBody.replace(fullMatch, `![${alt}](${devtoJpgProxyUrl(sourceUrl)})`);
+  }
+  return nextBody;
+}
+
+function resolveArticleImageUrl(article, imagePath) {
+  if (/^https?:\/\//i.test(imagePath)) {
+    return imagePath;
+  }
+
+  const normalizedPath = normalizePath(join(article.dir, imagePath));
+  const matched = (article.meta.images || []).find((image) => normalizePath(image.localPath || "") === normalizedPath || basename(image.localPath || "") === basename(imagePath));
+  return matched?.url || null;
+}
+
+function devtoJpgProxyUrl(sourceUrl) {
+  const url = new URL(sourceUrl);
+  const remotePath = `${url.hostname}${url.pathname}`;
+  return `https://wsrv.nl/?url=${encodeURIComponent(remotePath)}&output=jpg`;
+}
+
 
 async function check() {
   const slugs = await listArticleSlugs();

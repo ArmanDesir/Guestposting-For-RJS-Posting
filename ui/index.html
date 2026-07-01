@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RightJob Syndication</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>RightJob Syndication</h1>
+      <p id="summary">Loading newsroom status...</p>
+    </div>
+    <div class="actions">
+      <button id="pullBtn" class="primary">Pull Latest</button>
+      <button id="exportBtn">Regenerate Drafts</button>
+      <button id="scheduleBtn">Run Schedule</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="status-strip">
+      <div>
+        <span>DEV.to API</span>
+        <strong id="devtoKey">Checking</strong>
+      </div>
+      <div>
+        <span>Articles</span>
+        <strong id="articleCount">0</strong>
+      </div>
+      <div>
+        <span>Last Pull</span>
+        <strong id="lastPull">-</strong>
+      </div>
+      <div>
+        <span>Active Job</span>
+        <strong id="activeJob">Idle</strong>
+      </div>
+    </section>
+
+    <section class="split">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Latest Articles</h2>
+          <input id="search" type="search" placeholder="Search articles">
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Article</th>
+                <th>Date</th>
+                <th>DEV.to</th>
+              </tr>
+            </thead>
+            <tbody id="articles"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <aside class="panel side">
+        <h2>Run Log</h2>
+        <pre id="log">No jobs yet.</pre>
+      </aside>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

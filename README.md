@@ -74,6 +74,8 @@ Supported platforms:
 
 Use `action: "draft"` for DEV.to when the API key is configured. Use `action: "manual"` for every other platform; the scheduler will output the exact file to copy into the platform editor.
 
+DEV.to API drafts need public image URLs. During export, WebP images referenced in DEV.to drafts are rewritten through a public JPG conversion URL so DEV.to receives a fetchable JPEG image instead of a local file path.
+
 ## Notes
 
 - Source: `https://rightjobsolutions.com/newsroom/`
