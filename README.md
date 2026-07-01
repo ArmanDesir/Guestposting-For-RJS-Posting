@@ -117,13 +117,35 @@ Create one DEV.to browser-assisted draft:
 C:\Users\Admin-PC\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m guestpost_agent --draft --platform devto --limit 1
 ```
 
-Use the RightJob support Chrome profile by setting `.env`:
+Use the dedicated automation Chrome profile by setting `.env`:
+
+```env
+RJS_BROWSER_PROFILE=.browser-profile
+RJS_CHROME_PROFILE_NAME=Default
+```
+
+Log into Medium once inside the automation browser when it opens. That login will persist for future Medium draft runs and avoids Chrome locking the main everyday browser profile.
+
+To use the company Chrome profile for Medium, set `.env` to:
 
 ```env
 RJS_BROWSER_PROFILE=C:\Users\Admin-PC\AppData\Local\Google\Chrome\User Data
 RJS_CHROME_PROFILE_NAME=Profile 1
+RJS_CDP_URL=http://localhost:9222
 ```
 
-On this machine, Chrome `Profile 1` is `support@rightjobsolutions.com`. Close existing Chrome windows before running Playwright against that profile, because Chrome may lock an active profile.
+Then close all normal Chrome windows and open the company profile in controllable mode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\start-company-chrome.ps1
+```
+
+If Chrome is already running and you want the helper to close it first:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\start-company-chrome.ps1 -ForceClose
+```
+
+After that, keep that Chrome window open and use the UI Medium draft button. Without this remote-debugging session, Playwright cannot control an already-open normal Chrome profile and Medium may fail with an `about:blank` tab.
 
 For browser drafting, the agent will open Chrome. If the account is not logged in, log in manually. If CAPTCHA or 2FA appears, complete it manually, then resume. The agent never clicks publish.

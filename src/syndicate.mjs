@@ -329,10 +329,11 @@ async function exportPlatformDrafts(article) {
   const platformsDir = join(article.dir, "platforms");
   await mkdir(platformsDir, { recursive: true });
   const body = stripExistingCanonical(article.markdown);
+  const mediumBody = prepareMediumBody(article, body);
   const devtoBody = await prepareDevtoBody(article, body);
 
   const exports = {
-    medium: mediumDraft(article, body),
+    medium: mediumDraft(article, mediumBody),
     tumblr: tumblrDraft(article, body),
     devto: devtoDraft(article, devtoBody),
     hashnode: hashnodeDraft(article, body),
@@ -342,6 +343,10 @@ async function exportPlatformDrafts(article) {
   for (const [platform, content] of Object.entries(exports)) {
     await writeFile(join(platformsDir, `${platform}.md`), content);
   }
+}
+
+function prepareMediumBody(article, body) {
+  return replaceImageMarkdown(body, article, (sourceUrl) => imageProxyUrl(sourceUrl, "png"));
 }
 
 function mediumDraft(article, body) {
@@ -527,13 +532,17 @@ async function createDevtoDraft(article) {
 }
 
 async function prepareDevtoBody(article, body) {
-  const imageMatches = [...body.matchAll(/!\[([^\]]*)\]\(([^)]+\.webp)\)/gi)];
+  return replaceImageMarkdown(body, article, (sourceUrl) => imageProxyUrl(sourceUrl, "jpg"));
+}
+
+function replaceImageMarkdown(body, article, transformUrl) {
+  const imageMatches = [...body.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/gi)];
   let nextBody = body;
   for (const match of imageMatches) {
     const [fullMatch, alt, imagePath] = match;
     const sourceUrl = resolveArticleImageUrl(article, imagePath);
     if (!sourceUrl) continue;
-    nextBody = nextBody.replace(fullMatch, `![${alt}](${devtoJpgProxyUrl(sourceUrl)})`);
+    nextBody = nextBody.replace(fullMatch, `![${alt}](${transformUrl(sourceUrl)})`);
   }
   return nextBody;
 }
@@ -548,10 +557,10 @@ function resolveArticleImageUrl(article, imagePath) {
   return matched?.url || null;
 }
 
-function devtoJpgProxyUrl(sourceUrl) {
+function imageProxyUrl(sourceUrl, output) {
   const url = new URL(sourceUrl);
   const remotePath = `${url.hostname}${url.pathname}`;
-  return `https://wsrv.nl/?url=${encodeURIComponent(remotePath)}&output=jpg`;
+  return `https://wsrv.nl/?url=${encodeURIComponent(remotePath)}&output=${output}`;
 }
 
 

@@ -17,6 +17,7 @@ def main() -> int:
     parser.add_argument("--draft", action="store_true", help="Open browser and create platform drafts")
     parser.add_argument("--limit", type=int, default=1, help="Maximum new articles to process")
     parser.add_argument("--platform", action="append", help="Limit to one or more platforms, e.g. --platform devto")
+    parser.add_argument("--slug", help="Draft one specific article slug")
     parser.add_argument("--discover", action="store_true", help="Include guest-post discovery search plan in the report")
     parser.add_argument("--force", action="store_true", help="Retry even if this article/platform is already recorded")
     args = parser.parse_args()
@@ -35,7 +36,10 @@ async def run(args) -> int:
     skipped = [article for article in articles if store.seen_article(article)]
     selected = []
     if args.draft:
-        for article in articles:
+        candidates = articles
+        if args.slug:
+            candidates = [article for article in articles if article.slug == args.slug]
+        for article in candidates:
             if args.force or any(not store.drafted(article, publisher.platform) for publisher in publishers):
                 selected.append(article)
             if len(selected) >= args.limit:

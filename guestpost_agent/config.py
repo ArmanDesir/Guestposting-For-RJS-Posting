@@ -9,6 +9,7 @@ from pathlib import Path
 class Settings:
     browser_profile: Path
     chrome_profile_name: str
+    cdp_url: str
     upload_dir: Path
     report_dir: Path
     database_path: Path
@@ -39,6 +40,7 @@ def load_settings() -> Settings:
     return Settings(
         browser_profile=Path(os.getenv("RJS_BROWSER_PROFILE", ".browser-profile")),
         chrome_profile_name=os.getenv("RJS_CHROME_PROFILE_NAME", "Default"),
+        cdp_url=os.getenv("RJS_CDP_URL", "").strip(),
         upload_dir=Path(os.getenv("RJS_UPLOAD_DIR", "data/articles")),
         report_dir=Path(os.getenv("RJS_REPORT_DIR", "reports")),
         database_path=Path(os.getenv("RJS_DATABASE_PATH", "data/guestpost-agent.sqlite")),
