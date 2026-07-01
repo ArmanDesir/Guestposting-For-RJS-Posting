@@ -7,6 +7,7 @@ const SITE = "https://rightjobsolutions.com";
 const POSTS_API = `${SITE}/wp-json/wp/v2/posts`;
 const CATEGORIES_API = `${SITE}/wp-json/wp/v2/categories`;
 const TAGS_API = `${SITE}/wp-json/wp/v2/tags`;
+const MIN_PUBLISHED_DATE = "2026-04-01T00:00:00";
 const DATA_DIR = "data";
 const ARTICLES_DIR = join(DATA_DIR, "articles");
 const CALENDAR_FILE = "posting-calendar.json";
@@ -45,6 +46,7 @@ async function pullArticles() {
     join(DATA_DIR, "index.json"),
     JSON.stringify({
       source: `${SITE}/newsroom/`,
+      minPublishedDate: MIN_PUBLISHED_DATE,
       pulledAt: new Date().toISOString(),
       count: posts.length,
       slugs: posts.map((post) => post.slug)
@@ -58,7 +60,7 @@ async function fetchPosts() {
   const posts = [];
   let page = 1;
   while (true) {
-    const url = `${POSTS_API}?status=publish&per_page=100&page=${page}&_embed=1`;
+    const url = `${POSTS_API}?status=publish&after=${encodeURIComponent(MIN_PUBLISHED_DATE)}&per_page=100&page=${page}&_embed=1`;
     const { json, headers } = await fetchJson(url);
     posts.push(...json);
     const totalPages = Number(headers.get("x-wp-totalpages") || page);
