@@ -1,0 +1,17 @@
+{
+  "name": "rjs-content-syndication",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Content syndication automation for Rightjob Solutions newsroom articles.",
+  "scripts": {
+    "pull": "node src/syndicate.mjs pull",
+    "export": "node src/syndicate.mjs export",
+    "schedule": "node src/syndicate.mjs schedule",
+    "all": "node src/syndicate.mjs all",
+    "check": "node src/syndicate.mjs check"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
