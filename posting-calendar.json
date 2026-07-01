@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "date": "2026-06-30T16:00:00.000Z",
+    "slug": "virtual-assistant-vs-ai",
+    "platform": "devto",
+    "action": "manual"
+  },
+  {
+    "date": "2026-07-01T16:00:00.000Z",
+    "slug": "virtual-assistant-tasks-small-business",
+    "platform": "devto",
+    "action": "manual"
+  },
+  {
+    "date": "2026-07-02T16:00:00.000Z",
+    "slug": "virtual-assistant-cost-us",
+    "platform": "devto",
+    "action": "manual"
+  }
+]

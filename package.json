@@ -7,6 +7,7 @@
   "scripts": {
     "pull": "node src/syndicate.mjs pull",
     "export": "node src/syndicate.mjs export",
+    "queue": "node src/syndicate.mjs queue",
     "schedule": "node src/syndicate.mjs schedule",
     "all": "node src/syndicate.mjs all",
     "check": "node src/syndicate.mjs check"

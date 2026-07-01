@@ -19,6 +19,7 @@ async function main() {
   const command = process.argv[2] || "all";
   if (command === "pull") await pullArticles();
   else if (command === "export") await exportAllPlatformDrafts();
+  else if (command === "queue") await createPostingQueue(parseArgs(process.argv.slice(3)));
   else if (command === "schedule") await runScheduler();
   else if (command === "all") {
     await pullArticles();
@@ -235,6 +236,61 @@ async function exportAllPlatformDrafts() {
   console.log(`Exported ${slugs.length} article(s) for ${PLATFORMS.join(", ")}`);
 }
 
+async function createPostingQueue(options) {
+  await mkdir(DATA_DIR, { recursive: true });
+  const platform = options.platform || "devto";
+  const intervalDays = Number(options["interval-days"] || 1);
+  const limit = Number(options.limit || 0);
+  const start = parseStartDate(options.start || "now");
+
+  if (!PLATFORMS.includes(platform)) {
+    throw new Error(`Unsupported platform: ${platform}. Use one of: ${PLATFORMS.join(", ")}`);
+  }
+
+  const articles = [];
+  for (const slug of await listArticleSlugs()) {
+    articles.push(await loadArticle(slug));
+  }
+  articles.sort((a, b) => new Date(b.meta.date).getTime() - new Date(a.meta.date).getTime());
+
+  const selected = limit > 0 ? articles.slice(0, limit) : articles;
+  const existing = await readJson(CALENDAR_FILE, []);
+  const existingKeys = new Set(existing.map(calendarKey));
+  const entries = [];
+
+  selected.forEach((article, index) => {
+    const date = new Date(start.getTime() + index * intervalDays * 24 * 60 * 60 * 1000);
+    const entry = {
+      date: date.toISOString(),
+      slug: article.meta.slug,
+      platform,
+      action: "manual"
+    };
+    const key = calendarKey(entry);
+    if (!existingKeys.has(key)) {
+      existingKeys.add(key);
+      entries.push(entry);
+    }
+  });
+
+  const updatedCalendar = [...existing, ...entries];
+  await writeFile(CALENDAR_FILE, JSON.stringify(updatedCalendar, null, 2));
+  await writeFile(
+    join(DATA_DIR, "posting-queue.json"),
+    JSON.stringify({
+      createdAt: new Date().toISOString(),
+      platform,
+      action: "manual",
+      intervalDays,
+      added: entries.length,
+      calendarFile: CALENDAR_FILE,
+      entries
+    }, null, 2)
+  );
+
+  console.log(`Added ${entries.length} manual ${platform} queue item(s) to ${CALENDAR_FILE}`);
+}
+
 async function exportPlatformDrafts(article) {
   const platformsDir = join(article.dir, "platforms");
   await mkdir(platformsDir, { recursive: true });
@@ -360,127 +416,13 @@ async function handleScheduleEntry(entry) {
   const article = await loadArticle(entry.slug);
   await exportPlatformDrafts(article);
 
-  if ((entry.action || "manual") === "manual") {
-    return {
-      status: "manual-export-ready",
-      platform: entry.platform,
-      file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
-    };
-  }
-
-  return createApiDraft(entry.platform, article);
-}
-
-async function createApiDraft(platform, article) {
-  if (platform === "devto") return createDevtoDraft(article, "https://dev.to/api/articles", process.env.DEVTO_API_KEY);
-  if (platform === "forem") {
-    const baseUrl = (process.env.FOREM_BASE_URL || "").replace(/\/$/, "");
-    if (!baseUrl || !process.env.FOREM_API_KEY) return missingApi(platform, ["FOREM_BASE_URL", "FOREM_API_KEY"], article);
-    return createDevtoDraft(article, `${baseUrl}/api/articles`, process.env.FOREM_API_KEY);
-  }
-  if (platform === "hashnode") return createHashnodeDraft(article);
-  if (platform === "medium") return createMediumDraft(article);
   return {
     status: "manual-export-ready",
-    platform,
-    reason: "No OAuth-backed official API adapter is configured for this platform.",
-    file: normalizePath(join(article.dir, "platforms", `${platform}.md`))
+    platform: entry.platform,
+    title: article.meta.title,
+    originalUrl: article.meta.originalUrl,
+    file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
   };
-}
-
-async function createDevtoDraft(article, endpoint, apiKey) {
-  if (!apiKey) return missingApi("devto/forem", ["DEVTO_API_KEY or FOREM_API_KEY"], article);
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "api-key": apiKey,
-      "content-type": "application/json",
-      "user-agent": USER_AGENT
-    },
-    body: JSON.stringify({
-      article: {
-        title: article.meta.title,
-        published: false,
-        body_markdown: stripExistingCanonical(article.markdown) + canonicalLink(article),
-        canonical_url: article.meta.originalUrl,
-        description: article.meta.excerpt,
-        tags: article.meta.tags.slice(0, 4).map((tag) => slugify(tag).slice(0, 30))
-      }
-    })
-  });
-  return apiResult("devto/forem", response);
-}
-
-async function createHashnodeDraft(article) {
-  if (!process.env.HASHNODE_TOKEN || !process.env.HASHNODE_PUBLICATION_ID) {
-    return missingApi("hashnode", ["HASHNODE_TOKEN", "HASHNODE_PUBLICATION_ID"], article);
-  }
-  const mutation = `
-    mutation CreateDraft($input: CreateDraftInput!) {
-      createDraft(input: $input) { draft { id title slug } }
-    }
-  `;
-  const response = await fetch("https://gql.hashnode.com", {
-    method: "POST",
-    headers: {
-      authorization: process.env.HASHNODE_TOKEN,
-      "content-type": "application/json",
-      "user-agent": USER_AGENT
-    },
-    body: JSON.stringify({
-      query: mutation,
-      variables: {
-        input: {
-          publicationId: process.env.HASHNODE_PUBLICATION_ID,
-          title: article.meta.title,
-          contentMarkdown: stripExistingCanonical(article.markdown) + canonicalLink(article),
-          subtitle: article.meta.excerpt,
-          originalArticleURL: article.meta.originalUrl,
-          tags: article.meta.tags.slice(0, 5).map((tag) => ({ name: tag, slug: slugify(tag) }))
-        }
-      }
-    })
-  });
-  return apiResult("hashnode", response);
-}
-
-async function createMediumDraft(article) {
-  if (!process.env.MEDIUM_TOKEN || !process.env.MEDIUM_AUTHOR_ID) {
-    return missingApi("medium", ["MEDIUM_TOKEN", "MEDIUM_AUTHOR_ID"], article);
-  }
-  const response = await fetch(`https://api.medium.com/v1/users/${process.env.MEDIUM_AUTHOR_ID}/posts`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${process.env.MEDIUM_TOKEN}`,
-      "content-type": "application/json",
-      accept: "application/json",
-      "user-agent": USER_AGENT
-    },
-    body: JSON.stringify({
-      title: article.meta.title,
-      contentFormat: "markdown",
-      content: stripExistingCanonical(article.markdown) + canonicalLink(article),
-      canonicalUrl: article.meta.originalUrl,
-      tags: article.meta.tags.slice(0, 5),
-      publishStatus: "draft"
-    })
-  });
-  return apiResult("medium", response);
-}
-
-function missingApi(platform, names, article) {
-  return {
-    status: "manual-export-ready",
-    platform,
-    reason: `Missing official API environment variable(s): ${names.join(", ")}`,
-    file: normalizePath(join(article.dir, "platforms", `${platform.split("/")[0]}.md`))
-  };
-}
-
-async function apiResult(platform, response) {
-  const text = await response.text();
-  if (!response.ok) return { status: "failed", platform, code: response.status, response: text.slice(0, 1000) };
-  return { status: "api-draft-created", platform, code: response.status, response: safeJson(text) || text.slice(0, 1000) };
 }
 
 async function check() {
@@ -535,6 +477,29 @@ async function readJson(file, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function parseArgs(args) {
+  const options = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg.startsWith("--")) continue;
+    const [rawKey, rawValue] = arg.slice(2).split("=");
+    options[rawKey] = rawValue ?? args[index + 1] ?? true;
+    if (rawValue === undefined && args[index + 1] && !args[index + 1].startsWith("--")) index += 1;
+  }
+  return options;
+}
+
+function parseStartDate(value) {
+  if (value === "now") return new Date();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid start date: ${value}`);
+  return date;
+}
+
+function calendarKey(entry) {
+  return `${entry.date}|${entry.slug}|${entry.platform}|${entry.action || "manual"}`;
 }
 
 function htmlToMarkdown(html, articleDir) {
@@ -649,14 +614,6 @@ function slugify(value) {
 
 function normalizePath(file) {
   return file.replaceAll("\\", "/");
-}
-
-function safeJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
 }
 
 main().catch((error) => {
