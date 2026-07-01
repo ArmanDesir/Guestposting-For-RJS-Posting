@@ -33,9 +33,9 @@ npm run check
 
 `npm run queue` creates a manual posting queue in `posting-calendar.json`.
 
-`npm run schedule` reads `posting-calendar.json`, finds due entries, and marks the matching platform draft file as ready for manual posting.
+`npm run schedule` reads `posting-calendar.json`, finds due entries, and marks the matching platform draft file as ready for manual posting. For DEV.to only, `action: "draft"` creates an official API draft when `DEVTO_API_KEY` exists in `.env`.
 
-It never logs into any platform and never posts automatically.
+It never publishes automatically.
 
 ## Scheduler
 
@@ -43,6 +43,12 @@ Create a DEV.to manual queue for the five newest articles:
 
 ```powershell
 npm run queue -- --platform devto --limit 5 --interval-days 1 --start 2026-07-02T09:00:00+08:00
+```
+
+Create a DEV.to API-draft queue:
+
+```powershell
+npm run queue -- --platform devto --action draft --limit 5 --interval-days 1 --start 2026-07-02T09:00:00+08:00
 ```
 
 Or add entries manually:
@@ -53,7 +59,7 @@ Or add entries manually:
     "date": "2026-07-02T09:00:00+08:00",
     "slug": "your-article-slug",
     "platform": "devto",
-    "action": "manual"
+    "action": "draft"
   }
 ]
 ```
@@ -66,7 +72,7 @@ Supported platforms:
 - `hashnode`
 - `forem`
 
-Use `action: "manual"` for every platform. The scheduler will output the exact file to copy into the platform editor.
+Use `action: "draft"` for DEV.to when the API key is configured. Use `action: "manual"` for every other platform; the scheduler will output the exact file to copy into the platform editor.
 
 ## Notes
 
@@ -108,5 +114,14 @@ Create one DEV.to browser-assisted draft:
 ```powershell
 C:\Users\Admin-PC\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m guestpost_agent --draft --platform devto --limit 1
 ```
+
+Use the RightJob support Chrome profile by setting `.env`:
+
+```env
+RJS_BROWSER_PROFILE=C:\Users\Admin-PC\AppData\Local\Google\Chrome\User Data
+RJS_CHROME_PROFILE_NAME=Profile 1
+```
+
+On this machine, Chrome `Profile 1` is `support@rightjobsolutions.com`. Close existing Chrome windows before running Playwright against that profile, because Chrome may lock an active profile.
 
 For browser drafting, the agent will open Chrome. If the account is not logged in, log in manually. If CAPTCHA or 2FA appears, complete it manually, then resume. The agent never clicks publish.

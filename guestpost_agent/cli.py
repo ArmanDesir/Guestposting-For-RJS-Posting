@@ -18,6 +18,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=1, help="Maximum new articles to process")
     parser.add_argument("--platform", action="append", help="Limit to one or more platforms, e.g. --platform devto")
     parser.add_argument("--discover", action="store_true", help="Include guest-post discovery search plan in the report")
+    parser.add_argument("--force", action="store_true", help="Retry even if this article/platform is already recorded")
     args = parser.parse_args()
     return asyncio.run(run(args))
 
@@ -35,7 +36,7 @@ async def run(args) -> int:
     selected = []
     if args.draft:
         for article in articles:
-            if any(not store.drafted(article, publisher.platform) for publisher in publishers):
+            if args.force or any(not store.drafted(article, publisher.platform) for publisher in publishers):
                 selected.append(article)
             if len(selected) >= args.limit:
                 break
@@ -46,7 +47,7 @@ async def run(args) -> int:
             for article in selected:
                 store.upsert_article(article)
                 for publisher in publishers:
-                    if store.drafted(article, publisher.platform):
+                    if not args.force and store.drafted(article, publisher.platform):
                         continue
                     result = await publisher.create_draft(context, article)
                     store.record_draft(result)

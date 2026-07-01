@@ -16,6 +16,7 @@ const USER_AGENT = "RightJobSolutions-Syndication/1.0 (+https://rightjobsolution
 const PLATFORMS = ["medium", "tumblr", "devto", "hashnode", "forem"];
 
 async function main() {
+  await loadEnvFile();
   const command = process.argv[2] || "all";
   if (command === "pull") await pullArticles();
   else if (command === "export") await exportAllPlatformDrafts();
@@ -28,6 +29,23 @@ async function main() {
   else {
     console.error(`Unknown command: ${command}`);
     process.exitCode = 1;
+  }
+}
+
+async function loadEnvFile() {
+  try {
+    const text = await readFile(".env", "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match) continue;
+      const [, key, rawValue] = match;
+      if (process.env[key]) continue;
+      process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+    }
+  } catch {
+    // .env is optional. Credentials should still come from environment variables only.
   }
 }
 
@@ -264,7 +282,7 @@ async function createPostingQueue(options) {
       date: date.toISOString(),
       slug: article.meta.slug,
       platform,
-      action: "manual"
+      action: options.action || "manual"
     };
     const key = calendarKey(entry);
     if (!existingKeys.has(key)) {
@@ -280,7 +298,7 @@ async function createPostingQueue(options) {
     JSON.stringify({
       createdAt: new Date().toISOString(),
       platform,
-      action: "manual",
+      action: options.action || "manual",
       intervalDays,
       added: entries.length,
       calendarFile: CALENDAR_FILE,
@@ -288,7 +306,7 @@ async function createPostingQueue(options) {
     }, null, 2)
   );
 
-  console.log(`Added ${entries.length} manual ${platform} queue item(s) to ${CALENDAR_FILE}`);
+  console.log(`Added ${entries.length} ${options.action || "manual"} ${platform} queue item(s) to ${CALENDAR_FILE}`);
 }
 
 async function exportPlatformDrafts(article) {
@@ -346,7 +364,7 @@ function devtoDraft(article, body) {
     "published: false",
     `canonical_url: ${yamlString(article.meta.originalUrl)}`,
     `description: ${yamlString(article.meta.excerpt)}`,
-    `tags: ${article.meta.tags.slice(0, 4).map((tag) => slugify(tag).slice(0, 30)).join(", ")}`,
+    `tags: ${devtoTags(article).join(", ")}`,
     "---",
     "",
     body,
@@ -416,12 +434,77 @@ async function handleScheduleEntry(entry) {
   const article = await loadArticle(entry.slug);
   await exportPlatformDrafts(article);
 
+  if ((entry.action || "manual") === "draft") {
+    if (entry.platform === "devto") return createDevtoDraft(article);
+    return {
+      status: "manual-export-ready",
+      platform: entry.platform,
+      reason: "API drafting is only configured for DEV.to. Use action manual for this platform.",
+      title: article.meta.title,
+      originalUrl: article.meta.originalUrl,
+      file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
+    };
+  }
+
   return {
     status: "manual-export-ready",
     platform: entry.platform,
     title: article.meta.title,
     originalUrl: article.meta.originalUrl,
     file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
+  };
+}
+
+async function createDevtoDraft(article) {
+  if (!process.env.DEVTO_API_KEY) {
+    return {
+      status: "manual-export-ready",
+      platform: "devto",
+      reason: "Missing DEVTO_API_KEY environment variable.",
+      title: article.meta.title,
+      originalUrl: article.meta.originalUrl,
+      file: normalizePath(join(article.dir, "platforms", "devto.md"))
+    };
+  }
+
+  const response = await fetch("https://dev.to/api/articles", {
+    method: "POST",
+    headers: {
+      "api-key": process.env.DEVTO_API_KEY,
+      "content-type": "application/json",
+      "user-agent": USER_AGENT
+    },
+    body: JSON.stringify({
+      article: {
+        title: article.meta.title,
+        published: false,
+        body_markdown: stripExistingCanonical(article.markdown) + canonicalLink(article),
+        canonical_url: article.meta.originalUrl,
+        description: article.meta.excerpt,
+        tags: devtoTags(article)
+      }
+    })
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    return {
+      status: "failed",
+      platform: "devto",
+      title: article.meta.title,
+      code: response.status,
+      error: text.slice(0, 1000)
+    };
+  }
+
+  const body = safeJson(text);
+  return {
+    status: "api-draft-created",
+    platform: "devto",
+    title: article.meta.title,
+    code: response.status,
+    draftUrl: body?.url || body?.canonical_url || "",
+    id: body?.id || ""
   };
 }
 
@@ -612,8 +695,23 @@ function slugify(value) {
     .slice(0, 100) || "untitled";
 }
 
+function devtoTags(article) {
+  const tags = article.meta.tags
+    .map((tag) => String(tag).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 30))
+    .filter(Boolean);
+  return [...new Set(tags)].slice(0, 4);
+}
+
 function normalizePath(file) {
   return file.replaceAll("\\", "/");
+}
+
+function safeJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 main().catch((error) => {

@@ -20,14 +20,19 @@ class ManualBrowserPublisher(Publisher):
         self.body_selectors = body_selectors or []
 
     async def create_draft(self, context, article: Article) -> DraftResult:
-        page = await context.new_page()
+        page = context.pages[0] if context.pages else await context.new_page()
         try:
+            await page.bring_to_front()
+            print(f"Opening {self.platform} editor: {self.editor_url}")
             await page.goto(self.editor_url, wait_until="domcontentloaded", timeout=60000)
+            await page.bring_to_front()
+            print(f"{self.platform} loaded: {page.url}")
             if await login_or_verification_visible(page):
                 await pause_for_human(page, f"{self.platform} needs login or verification.")
 
             markdown = draft_markdown(article)
             await page.evaluate("text => navigator.clipboard.writeText(text)", markdown)
+            print(f"Copied draft to clipboard for: {article.title}")
             title_done = await fill_first(page, self.title_selectors, article.title)
             body_done = await fill_first(page, self.body_selectors, markdown)
 
