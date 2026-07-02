@@ -5,6 +5,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   calendarKey,
+  deleteScheduledPost,
   insertScheduledPost,
   isSupabaseConfigured,
   listScheduledPosts
@@ -86,6 +87,30 @@ async function handleApi(req, res, url) {
       await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
       return sendJson(res, 201, { entry, calendar: updated, storage: "local" });
     }
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/calendar") {
+    const id = url.searchParams.get("id");
+    if (!id) return sendJson(res, 400, { error: "Missing schedule id." });
+    const env = await readEnv();
+    if (isSupabaseConfigured(env)) {
+      try {
+        await deleteScheduledPost(id, env);
+        return sendJson(res, 200, { status: "cancelled", storage: "supabase" });
+      } catch (error) {
+        return sendJson(res, error.status || 500, { error: error.message });
+      }
+    }
+
+    const calendar = await readJson(CALENDAR_FILE, []);
+    const schedulerState = await readJson(SCHEDULER_STATE_FILE, { completed: [] });
+    if ((schedulerState.completed || []).includes(id)) {
+      return sendJson(res, 409, { error: "Completed schedule entries cannot be cancelled." });
+    }
+    const updated = calendar.filter((entry) => calendarKey(entry) !== id);
+    if (updated.length === calendar.length) return sendJson(res, 404, { error: "Schedule entry not found." });
+    await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+    return sendJson(res, 200, { status: "cancelled", storage: "local" });
   }
 
   if (req.method === "POST" && url.pathname === "/api/draft/devto") {

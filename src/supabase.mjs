@@ -40,6 +40,22 @@ export async function insertScheduledPost(entry, env = process.env) {
   }
 }
 
+export async function deleteScheduledPost(id, env = process.env) {
+  const rows = await supabaseRequest(
+    `/${CALENDAR_TABLE}?id=eq.${encodeURIComponent(id)}&status=eq.pending`,
+    {
+      method: "DELETE",
+      headers: { "prefer": "return=representation" }
+    },
+    env
+  );
+  if (!rows?.length) {
+    const error = new Error("Schedule entry was not found or is no longer pending.");
+    error.status = 404;
+    throw error;
+  }
+}
+
 export async function listDueScheduledPosts(nowIso = new Date().toISOString(), env = process.env) {
   const query = [
     "select=*",
@@ -99,7 +115,7 @@ function supabaseServerKey(env) {
 }
 
 async function updateScheduledPost(entry, patch, env) {
-  const id = encodeURIComponent(calendarKey(entry));
+  const id = encodeURIComponent(entry.id || calendarKey(entry));
   await supabaseRequest(
     `/${CALENDAR_TABLE}?id=eq.${id}`,
     {

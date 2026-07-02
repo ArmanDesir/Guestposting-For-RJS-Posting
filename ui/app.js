@@ -18,6 +18,7 @@ const els = {
   scheduleAction: document.querySelector("#scheduleAction"),
   scheduleDate: document.querySelector("#scheduleDate"),
   calendar: document.querySelector("#calendar"),
+  history: document.querySelector("#history"),
   preview: document.querySelector("#preview"),
   notice: document.querySelector("#notice"),
   loader: document.querySelector("#loader")
@@ -145,18 +146,33 @@ function apiConfigured(platform) {
 
 function renderCalendar() {
   const calendar = state.calendar || [];
-  els.calendar.innerHTML = calendar.length ? calendar.map((entry) => {
-    const article = (state.articles || []).find((item) => item.slug === entry.slug);
-    return `
-      <div class="calendar-item ${escapeHtml(entry.status)}">
-        <div>
-          <strong>${escapeHtml(article?.title || entry.slug)}</strong>
-          <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)} - ${formatDateTime(entry.date)}</span>
-        </div>
-        <b>${escapeHtml(entry.status)}</b>
+  const activeEntries = calendar.filter((entry) => !["completed", "failed"].includes(entry.status));
+  const historyEntries = calendar.filter((entry) => ["completed", "failed"].includes(entry.status)).reverse();
+  els.calendar.innerHTML = activeEntries.length ? activeEntries.map(renderCalendarItem).join("") : `<div class="empty">No pending scheduled posts.</div>`;
+  els.history.innerHTML = historyEntries.length ? historyEntries.map(renderCalendarItem).join("") : `<div class="empty">No completed or failed schedule entries yet.</div>`;
+
+  for (const button of document.querySelectorAll("[data-cancel-schedule]")) {
+    button.addEventListener("click", () => cancelSchedule(button.dataset.cancelSchedule));
+  }
+}
+
+function renderCalendarItem(entry) {
+  const article = (state.articles || []).find((item) => item.slug === entry.slug);
+  const canCancel = ["pending", "due"].includes(entry.status);
+  const error = entry.lastError ? `<span class="calendar-error">${escapeHtml(entry.lastError)}</span>` : "";
+  return `
+    <div class="calendar-item ${escapeHtml(entry.status)}">
+      <div>
+        <strong>${escapeHtml(article?.title || entry.slug)}</strong>
+        <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)} - ${formatDateTime(entry.date)}</span>
+        ${error}
       </div>
-    `;
-  }).join("") : `<div class="empty">No scheduled posts yet.</div>`;
+      <div class="calendar-controls">
+        <b>${escapeHtml(entry.status)}</b>
+        ${canCancel ? `<button type="button" class="danger small" data-cancel-schedule="${escapeAttr(entry.id)}">Cancel</button>` : ""}
+      </div>
+    </div>
+  `;
 }
 
 function renderLog() {
@@ -235,6 +251,24 @@ async function addSchedule(event) {
     }
     await refresh({ quiet: true });
     showNotice(`Scheduled ${currentArticle()?.title || slug} for ${platformLabel(body.platform)}.`, "success");
+  } finally {
+    localLoading = false;
+    syncJobLoader();
+  }
+}
+
+async function cancelSchedule(id) {
+  localLoading = true;
+  setLoading(true, "Cancelling schedule...");
+  try {
+    const response = await fetch(`/api/calendar?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showNotice(payload.error || "Could not cancel schedule entry.", "error");
+      return;
+    }
+    await refresh({ quiet: true });
+    showNotice("Schedule entry cancelled.", "success");
   } finally {
     localLoading = false;
     syncJobLoader();

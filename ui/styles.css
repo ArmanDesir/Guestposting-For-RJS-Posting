@@ -95,6 +95,17 @@ button.primary:hover {
   background: var(--accent-dark);
 }
 
+button.danger {
+  border-color: #f1aaa5;
+  color: var(--danger);
+}
+
+button.small {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
 button:disabled {
   opacity: .55;
   cursor: not-allowed;
@@ -335,10 +346,20 @@ input[type="search"] {
 }
 
 .calendar-item b {
-  align-self: start;
   color: var(--muted);
   font-size: 11px;
   text-transform: uppercase;
+}
+
+.calendar-controls {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+  align-self: start;
+}
+
+.calendar-error {
+  color: var(--danger) !important;
 }
 
 .calendar-item.due {
@@ -349,11 +370,17 @@ input[type="search"] {
   border-color: #84c59b;
 }
 
+.calendar-item.failed {
+  border-color: #f1aaa5;
+  background: #fff7f6;
+}
+
 .empty {
   color: var(--muted);
   padding: 10px 0;
 }
 
+.history-panel,
 .log-panel {
   margin-top: 14px;
 }
