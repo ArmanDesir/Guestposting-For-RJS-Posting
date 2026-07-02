@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 import {
   calendarKey,
   deleteScheduledPost,
+  deleteScheduledPosts,
   insertScheduledPost,
   isSupabaseConfigured,
-  listScheduledPosts
+  listScheduledPosts,
+  markScheduledPostCompletedById
 } from "./supabase.mjs";
 
 const ROOT = resolve(".");
@@ -17,6 +19,15 @@ const CALENDAR_FILE = join(ROOT, "posting-calendar.json");
 const SCHEDULER_STATE_FILE = join(ROOT, "data/scheduler-state.json");
 const PORT = Number(process.env.RJS_UI_PORT || 3077);
 const SCHEDULER_INTERVAL_MS = Number(process.env.RJS_SCHEDULER_INTERVAL_MS || 60_000);
+const ACTIVE_PLATFORMS = new Set(["devto", "medium", "hashnode", "tumblr", "hubspot", "substack", "quora"]);
+const MANUAL_PLATFORM_URLS = {
+  medium: "https://medium.com/new-story",
+  hashnode: "https://hashnode.com/new",
+  tumblr: "https://www.tumblr.com/new/text",
+  hubspot: "https://app.hubspot.com/content/",
+  substack: "https://substack.com/home",
+  quora: "https://rightjobsupportsspace.quora.com/"
+};
 let activeJob = null;
 let schedulerRunning = false;
 let lastSchedulerRun = null;
@@ -104,11 +115,100 @@ async function handleApi(req, res, url) {
 
     const calendar = await readJson(CALENDAR_FILE, []);
     const schedulerState = await readJson(SCHEDULER_STATE_FILE, { completed: [] });
-    if ((schedulerState.completed || []).includes(id)) {
-      return sendJson(res, 409, { error: "Completed schedule entries cannot be cancelled." });
-    }
     const updated = calendar.filter((entry) => calendarKey(entry) !== id);
     if (updated.length === calendar.length) return sendJson(res, 404, { error: "Schedule entry not found." });
+    await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+    if ((schedulerState.completed || []).includes(id)) {
+      const completed = (schedulerState.completed || []).filter((entryId) => entryId !== id);
+      await writeFile(SCHEDULER_STATE_FILE, JSON.stringify({ ...schedulerState, completed, updatedAt: new Date().toISOString() }, null, 2));
+    }
+    return sendJson(res, 200, { status: "cancelled", storage: "local" });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/calendar/delete") {
+    const body = await readBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.filter((id) => typeof id === "string" && id.trim()) : [];
+    if (!ids.length) return sendJson(res, 400, { error: "Select at least one schedule entry." });
+    const env = await readEnv();
+
+    if (isSupabaseConfigured(env)) {
+      const results = await deleteScheduledPosts(ids, env);
+      const failed = results.filter((result) => result.status === "failed");
+      return sendJson(res, failed.length ? 207 : 200, {
+        status: failed.length ? "partial" : "deleted",
+        deleted: results.length - failed.length,
+        failed
+      });
+    }
+
+    const idSet = new Set(ids);
+    const calendar = await readJson(CALENDAR_FILE, []);
+    const schedulerState = await readJson(SCHEDULER_STATE_FILE, { completed: [] });
+    const updated = calendar.filter((entry) => !idSet.has(calendarKey(entry)));
+    const completed = (schedulerState.completed || []).filter((entryId) => !idSet.has(entryId));
+    await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+    await writeFile(SCHEDULER_STATE_FILE, JSON.stringify({ ...schedulerState, completed, updatedAt: new Date().toISOString() }, null, 2));
+    return sendJson(res, 200, { status: "deleted", deleted: calendar.length - updated.length });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/calendar/complete") {
+    const body = await readBody(req);
+    const id = String(body.id || "").trim();
+    if (!id) return sendJson(res, 400, { error: "Missing schedule id." });
+    const env = await readEnv();
+    const result = {
+      status: "manual-recorded",
+      platform: body.platform || "",
+      recordedAt: new Date().toISOString(),
+      note: "Manual schedule/publish confirmed by user."
+    };
+
+    if (isSupabaseConfigured(env)) {
+      try {
+        await markScheduledPostCompletedById(id, result, env);
+        return sendJson(res, 200, { status: "completed", storage: "supabase" });
+      } catch (error) {
+        return sendJson(res, error.status || 500, { error: error.message });
+      }
+    }
+
+    const schedulerState = await readJson(SCHEDULER_STATE_FILE, { completed: [] });
+    const completed = [...new Set([...(schedulerState.completed || []), id])];
+    await writeFile(SCHEDULER_STATE_FILE, JSON.stringify({ ...schedulerState, completed, updatedAt: new Date().toISOString() }, null, 2));
+    return sendJson(res, 200, { status: "completed", storage: "local" });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/calendar/cancel-manual") {
+    const body = await readBody(req);
+    const id = String(body.id || "").trim();
+    if (!id) return sendJson(res, 400, { error: "Missing schedule id." });
+    const env = await readEnv();
+    const result = {
+      status: "manual-cancelled",
+      platform: body.platform || "",
+      recordedAt: new Date().toISOString(),
+      note: "Manual scheduled post cancellation confirmed by user."
+    };
+
+    if (isSupabaseConfigured(env)) {
+      try {
+        await markScheduledPostCompletedById(id, result, env);
+        return sendJson(res, 200, { status: "cancelled", storage: "supabase" });
+      } catch (error) {
+        return sendJson(res, error.status || 500, { error: error.message });
+      }
+    }
+
+    const calendar = await readJson(CALENDAR_FILE, []);
+    const updated = calendar.map((entry) => calendarKey(entry) === id ? {
+      ...entry,
+      status: "cancelled",
+      completedAt: new Date().toISOString(),
+      result
+    } : entry);
+    if (updated.every((entry) => calendarKey(entry) !== id && entry.id !== id)) {
+      return sendJson(res, 404, { error: "Schedule entry not found." });
+    }
     await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
     return sendJson(res, 200, { status: "cancelled", storage: "local" });
   }
@@ -128,16 +228,18 @@ async function handleApi(req, res, url) {
     });
   }
 
-  if (req.method === "GET" && url.pathname === "/api/platform/medium") {
+  if (req.method === "GET" && url.pathname.startsWith("/api/platform/")) {
+    const platform = url.pathname.split("/").pop();
     const slug = url.searchParams.get("slug");
+    if (!ACTIVE_PLATFORMS.has(platform)) return sendJson(res, 400, { error: "Unsupported platform." });
     if (!isSafeSlug(slug)) return sendJson(res, 400, { error: "Missing or invalid slug." });
-    const path = join(ROOT, "data/articles", slug, "platforms/medium.md");
+    const path = join(ROOT, "data/articles", slug, "platforms", `${platform}.md`);
     try {
       const markdown = await readFile(path, "utf8");
       const clipboard = mediumClipboardContent(markdown);
-      return sendJson(res, 200, { slug, ...clipboard });
+      return sendJson(res, 200, { slug, platform, openUrl: MANUAL_PLATFORM_URLS[platform] || "", ...clipboard });
     } catch {
-      return sendJson(res, 404, { error: "Medium draft file not found. Run Regenerate Drafts first." });
+      return sendJson(res, 404, { error: `${platform} draft file not found. Run Regenerate Drafts first.` });
     }
   }
 
@@ -163,13 +265,12 @@ async function getStatus() {
     jobs: jobs.slice(-20).reverse(),
     hasDevtoKey: Boolean(env.DEVTO_API_KEY),
     hasHashnodeKey: Boolean(env.HASHNODE_API_KEY),
-    hasForemKey: Boolean(env.FOREM_API_KEY),
     hasSupabase: supabaseEnabled
   };
 }
 
 function calendarStatus(entry, schedulerState) {
-  if (["completed", "failed"].includes(entry.status)) return entry;
+  if (["completed", "failed", "cancelled"].includes(entry.status)) return entry;
   const completed = new Set(schedulerState.completed || []);
   const key = calendarKey(entry);
   const due = new Date(entry.date).getTime() <= Date.now();
@@ -366,10 +467,9 @@ function normalizeCalendarEntry(body, env = {}) {
   const platform = String(body.platform || "").trim().toLowerCase();
   const action = String(body.action || "manual").trim().toLowerCase();
   const date = new Date(body.date);
-  const platforms = new Set(["medium", "tumblr", "devto", "hashnode", "forem", "hubspot", "substack", "quora", "hackernoon", "wakelet"]);
   const actions = new Set(["manual", "draft", "publish"]);
   if (!isSafeSlug(slug)) return { error: "Missing or invalid article slug." };
-  if (!platforms.has(platform)) return { error: "Unsupported platform." };
+  if (!ACTIVE_PLATFORMS.has(platform)) return { error: "Unsupported platform." };
   if (!actions.has(action)) return { error: "Unsupported schedule action." };
   if (Number.isNaN(date.getTime())) return { error: "Invalid schedule date." };
   if (action !== "manual" && !apiConfigured(platform, env)) {
@@ -386,9 +486,7 @@ function normalizeCalendarEntry(body, env = {}) {
 
 function apiConfigured(platform, env) {
   return {
-    devto: Boolean(env.DEVTO_API_KEY),
-    hashnode: Boolean(env.HASHNODE_API_KEY),
-    forem: Boolean(env.FOREM_API_KEY)
+    devto: Boolean(env.DEVTO_API_KEY)
   }[platform] || false;
 }
 

@@ -115,6 +115,18 @@ main {
   padding: 16px 22px 28px;
 }
 
+.view-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.view-tabs button.selected {
+  background: #111820;
+  border-color: #111820;
+  color: white;
+}
+
 .status-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -244,6 +256,18 @@ input[type="search"] {
   font-size: 14px;
 }
 
+.time-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+.time-row span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .notice {
   margin-top: 10px;
   padding: 9px 10px;
@@ -310,6 +334,26 @@ input[type="search"] {
   margin-top: 18px;
 }
 
+.section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.section-row .section-title,
+.section-row h2 {
+  margin-top: 0;
+}
+
+.bulk-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .calendar-list {
   display: grid;
   gap: 8px;
@@ -320,12 +364,25 @@ input[type="search"] {
 
 .calendar-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--soft);
+}
+
+.select-box {
+  display: flex;
+  align-items: start;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.select-box input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
 }
 
 .calendar-item strong,
@@ -370,6 +427,11 @@ input[type="search"] {
   border-color: #84c59b;
 }
 
+.calendar-item.cancelled {
+  border-color: #cbd5df;
+  background: #f3f5f7;
+}
+
 .calendar-item.failed {
   border-color: #f1aaa5;
   background: #fff7f6;
@@ -381,8 +443,243 @@ input[type="search"] {
 }
 
 .history-panel,
+.planner-panel,
 .log-panel {
   margin-top: 14px;
+}
+
+.planner-panel {
+  padding: 14px;
+}
+
+.planner-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.planner-tools {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.planner-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.planner-controls select {
+  width: auto;
+}
+
+.legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.dot.api {
+  background: var(--accent);
+}
+
+.dot.manual {
+  background: var(--warning);
+}
+
+.dot.done {
+  background: #64748b;
+}
+
+.planner-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.calendar-grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.planner-weekday {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #111820;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.planner-day {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  overflow: hidden;
+  min-height: 170px;
+}
+
+.planner-day header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: white;
+}
+
+.planner-day header div {
+  min-width: 0;
+}
+
+.planner-day header strong,
+.planner-day header small {
+  display: block;
+}
+
+.planner-day header small {
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.planner-day header span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.planner-day.disabled {
+  background: #eef1f5;
+}
+
+.planner-day.disabled header {
+  background: #f1f4f7;
+}
+
+.planner-day.outside-month {
+  opacity: .58;
+}
+
+.planner-stack {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.planner-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.planner-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  border-radius: 6px;
+  background: white;
+}
+
+.planner-card.api {
+  border-left-color: var(--accent);
+}
+
+.planner-card.manual {
+  border-left-color: var(--warning);
+}
+
+.planner-card.completed {
+  opacity: .75;
+}
+
+.planner-card.cancelled {
+  border-left-color: #64748b;
+  opacity: .72;
+}
+
+.planner-time,
+.planner-card b {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.planner-body {
+  min-width: 0;
+}
+
+.planner-body strong,
+.planner-body span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planner-body span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.planner-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 24, 32, .45);
+  z-index: 50;
+}
+
+.modal {
+  width: min(460px, 100%);
+  padding: 18px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: white;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+}
+
+.modal p {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 pre {
@@ -443,7 +740,36 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .planner-head,
+  .planner-tools {
+    align-items: stretch;
+    justify-items: stretch;
+  }
+
+  .planner-head {
+    flex-direction: column;
+  }
+
+  .planner-controls,
+  .legend {
+    justify-content: flex-start;
+  }
+
+  .calendar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .planner-weekday {
+    display: none;
+  }
+
   input[type="search"] {
     width: 100%;
+  }
+}
+
+@media (max-width: 620px) {
+  .calendar-grid {
+    grid-template-columns: 1fr;
   }
 }

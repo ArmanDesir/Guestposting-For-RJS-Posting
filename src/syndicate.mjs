@@ -23,7 +23,8 @@ const ARTICLES_DIR = join(DATA_DIR, "articles");
 const CALENDAR_FILE = "posting-calendar.json";
 const STATE_FILE = join(DATA_DIR, "scheduler-state.json");
 const USER_AGENT = "RightJobSolutions-Syndication/1.0 (+https://rightjobsolutions.com)";
-const PLATFORMS = ["medium", "tumblr", "devto", "hashnode", "forem", "hubspot", "substack", "quora", "hackernoon", "wakelet"];
+const PLATFORMS = ["devto", "medium", "hashnode", "tumblr", "hubspot", "substack", "quora"];
+const API_PLATFORMS = new Set(["devto"]);
 
 async function main() {
   await loadEnvFile();
@@ -323,15 +324,15 @@ async function createPostingQueue(options) {
 
 async function createDraftFromArgs(options) {
   const platform = options.platform || "devto";
-  if (!["devto", "hashnode"].includes(platform)) {
-    throw new Error("Direct API drafting is currently only available for DEV.to and Hashnode.");
+  if (!API_PLATFORMS.has(platform)) {
+    throw new Error("Direct API drafting is currently only available for configured API platforms.");
   }
   if (!options.slug) {
     throw new Error("Missing --slug for draft command.");
   }
   const article = await loadArticle(options.slug);
   await exportPlatformDrafts(article);
-  const result = platform === "hashnode" ? await createHashnodeDraft(article) : await createDevtoDraft(article);
+  const result = await createDevtoDraft(article);
   console.log(JSON.stringify(result, null, 2));
   if (result.status === "failed") process.exitCode = 1;
 }
@@ -344,16 +345,13 @@ async function exportPlatformDrafts(article) {
   const devtoBody = await prepareDevtoBody(article, body);
 
   const exports = {
-    medium: mediumDraft(article, mediumBody),
-    tumblr: tumblrDraft(article, body),
     devto: devtoDraft(article, devtoBody),
+    medium: mediumDraft(article, mediumBody),
     hashnode: hashnodeDraft(article, body),
-    forem: foremDraft(article, body),
+    tumblr: tumblrDraft(article, body),
     hubspot: manualPlatformDraft(article, body, "hubspot"),
     substack: manualPlatformDraft(article, body, "substack"),
-    quora: manualPlatformDraft(article, body, "quora"),
-    hackernoon: manualPlatformDraft(article, body, "hackernoon"),
-    wakelet: manualPlatformDraft(article, body, "wakelet")
+    quora: manualPlatformDraft(article, body, "quora")
   };
 
   for (const [platform, content] of Object.entries(exports)) {
@@ -420,22 +418,6 @@ function hashnodeDraft(article, body) {
       tags: article.meta.tags,
       publish_as: "draft"
     }),
-    "",
-    body,
-    canonicalLink(article),
-    ""
-  ].join("\n");
-}
-
-function foremDraft(article, body) {
-  return [
-    "---",
-    `title: ${yamlString(article.meta.title)}`,
-    "published: false",
-    `canonical_url: ${yamlString(article.meta.originalUrl)}`,
-    `description: ${yamlString(article.meta.excerpt)}`,
-    `tags: ${article.meta.tags.slice(0, 4).map((tag) => slugify(tag).slice(0, 30)).join(", ")}`,
-    "---",
     "",
     body,
     canonicalLink(article),
@@ -529,11 +511,10 @@ async function handleScheduleEntry(entry) {
 
   if ((entry.action || "manual") === "draft") {
     if (entry.platform === "devto") return createDevtoDraft(article);
-    if (entry.platform === "hashnode") return createHashnodeDraft(article);
     return {
       status: "manual-export-ready",
       platform: entry.platform,
-      reason: "API drafting is only configured for DEV.to and Hashnode. Use action manual for this platform.",
+      reason: "No working API is configured for this platform. Medium-style manual export is ready.",
       title: article.meta.title,
       originalUrl: article.meta.originalUrl,
       file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
@@ -542,11 +523,10 @@ async function handleScheduleEntry(entry) {
 
   if ((entry.action || "manual") === "publish") {
     if (entry.platform === "devto") return createDevtoPublish(article);
-    if (entry.platform === "hashnode") return createHashnodePublish(article);
     return {
       status: "manual-export-ready",
       platform: entry.platform,
-      reason: `${entry.platform} API publishing is not implemented yet. Manual scheduling/export is ready.`,
+      reason: "No working API is configured for this platform. Medium-style manual export is ready.",
       title: article.meta.title,
       originalUrl: article.meta.originalUrl,
       file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))

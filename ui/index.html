@@ -20,6 +20,11 @@
   </header>
 
   <main>
+    <nav class="view-tabs">
+      <button type="button" class="selected" data-view-tab="dashboard">Dashboard</button>
+      <button type="button" data-view-tab="planner">Calendar</button>
+    </nav>
+
     <section class="status-strip">
       <div>
         <span>Articles</span>
@@ -39,7 +44,7 @@
       </div>
     </section>
 
-    <section class="workspace">
+    <section class="workspace" data-view="dashboard">
       <div class="panel article-panel">
         <div class="panel-head">
           <div>
@@ -62,12 +67,9 @@
               <option value="medium">Medium</option>
               <option value="hashnode">Hashnode</option>
               <option value="tumblr">Tumblr</option>
-              <option value="forem">Forem</option>
               <option value="hubspot">HubSpot</option>
               <option value="substack">Substack</option>
               <option value="quora">Quora</option>
-              <option value="hackernoon">HackerNoon</option>
-              <option value="wakelet">Wakelet</option>
             </select>
           </label>
           <label>
@@ -79,8 +81,20 @@
             </select>
           </label>
           <label>
-            3. Date and time
-            <input id="scheduleDate" name="date" type="datetime-local">
+            3. Date
+            <input id="scheduleDate" name="date" type="date">
+          </label>
+          <label>
+            Time
+            <div class="time-row">
+              <select id="scheduleHour" name="hour" aria-label="Hour"></select>
+              <span>:</span>
+              <select id="scheduleMinute" name="minute" aria-label="Minute"></select>
+              <select id="scheduleAmPm" name="ampm" aria-label="AM or PM">
+                <option value="AM">AM</option>
+                <option value="PM">PM</option>
+              </select>
+            </div>
           </label>
           <label>
             4. Article
@@ -90,17 +104,57 @@
           <button class="primary" type="submit">Add Schedule</button>
         </form>
 
-        <h2 class="section-title">Scheduled</h2>
+        <div class="section-row">
+          <h2 class="section-title">Scheduled</h2>
+          <div class="bulk-actions">
+            <button type="button" class="small" id="selectScheduledBtn">Select all</button>
+            <button type="button" class="small" id="clearScheduledBtn">Clear selection</button>
+            <button type="button" class="danger small" id="deleteScheduledBtn">Cancel selected</button>
+          </div>
+        </div>
         <div id="calendar" class="calendar-list"></div>
       </aside>
     </section>
 
-    <section class="panel history-panel">
-      <h2>History</h2>
+    <section class="panel planner-panel" data-view="planner" hidden>
+      <div class="planner-head">
+        <div>
+          <h2>Posting Calendar</h2>
+          <p class="hint">API posts publish automatically. Manual posts need review on the platform, then confirmation here.</p>
+        </div>
+        <div class="planner-tools">
+          <div class="planner-controls">
+            <select id="plannerMode" aria-label="Calendar view">
+              <option value="two-weeks">Next 2 weeks</option>
+              <option value="month">Month</option>
+            </select>
+            <select id="plannerMonth" aria-label="Calendar month"></select>
+            <select id="plannerYear" aria-label="Calendar year"></select>
+            <button type="button" class="small" id="plannerTodayBtn">Today</button>
+          </div>
+          <div class="legend">
+            <span><b class="dot api"></b>API</span>
+            <span><b class="dot manual"></b>Manual</span>
+            <span><b class="dot done"></b>Done</span>
+          </div>
+        </div>
+      </div>
+      <div id="planner" class="planner-grid"></div>
+    </section>
+
+    <section class="panel history-panel" data-view="dashboard">
+      <div class="section-row">
+        <h2>History</h2>
+        <div class="bulk-actions">
+          <button type="button" class="small" id="selectHistoryBtn">Select all</button>
+          <button type="button" class="small" id="clearHistoryBtn">Clear selection</button>
+          <button type="button" class="danger small" id="deleteHistoryBtn">Remove selected</button>
+        </div>
+      </div>
       <div id="history" class="calendar-list"></div>
     </section>
 
-    <section class="panel log-panel">
+    <section class="panel log-panel" data-view="dashboard">
       <h2>Activity</h2>
       <pre id="log">No jobs yet.</pre>
     </section>
@@ -109,6 +163,17 @@
   <div id="loader" class="loader" hidden>
     <div></div>
     <span>Working...</span>
+  </div>
+  <div id="manualModal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2>Manual Posting Required</h2>
+      <p id="manualModalText"></p>
+      <div class="modal-actions">
+        <button type="button" id="manualCancelBtn">Cancel</button>
+        <button type="button" class="danger" id="manualConfirmCancelBtn" hidden>Record Cancelled</button>
+        <button type="button" class="primary" id="manualOpenBtn">Copy and Open Platform</button>
+      </div>
+    </div>
   </div>
   <script src="/app.js"></script>
 </body>

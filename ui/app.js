@@ -1,4 +1,5 @@
 const MANUAL_METHOD = "Manual platforms use the Medium-style flow: prepare content, copy/export it, then schedule inside the website.";
+const API_PLATFORMS = new Set(["devto"]);
 
 const els = {
   summary: document.querySelector("#summary"),
@@ -17,17 +18,40 @@ const els = {
   schedulePlatform: document.querySelector("#schedulePlatform"),
   scheduleAction: document.querySelector("#scheduleAction"),
   scheduleDate: document.querySelector("#scheduleDate"),
+  scheduleHour: document.querySelector("#scheduleHour"),
+  scheduleMinute: document.querySelector("#scheduleMinute"),
+  scheduleAmPm: document.querySelector("#scheduleAmPm"),
+  selectScheduledBtn: document.querySelector("#selectScheduledBtn"),
+  clearScheduledBtn: document.querySelector("#clearScheduledBtn"),
+  deleteScheduledBtn: document.querySelector("#deleteScheduledBtn"),
+  selectHistoryBtn: document.querySelector("#selectHistoryBtn"),
+  clearHistoryBtn: document.querySelector("#clearHistoryBtn"),
+  deleteHistoryBtn: document.querySelector("#deleteHistoryBtn"),
   calendar: document.querySelector("#calendar"),
   history: document.querySelector("#history"),
+  planner: document.querySelector("#planner"),
+  plannerMode: document.querySelector("#plannerMode"),
+  plannerMonth: document.querySelector("#plannerMonth"),
+  plannerYear: document.querySelector("#plannerYear"),
+  plannerTodayBtn: document.querySelector("#plannerTodayBtn"),
   preview: document.querySelector("#preview"),
   notice: document.querySelector("#notice"),
-  loader: document.querySelector("#loader")
+  loader: document.querySelector("#loader"),
+  manualModal: document.querySelector("#manualModal"),
+  manualModalText: document.querySelector("#manualModalText"),
+  manualCancelBtn: document.querySelector("#manualCancelBtn"),
+  manualConfirmCancelBtn: document.querySelector("#manualConfirmCancelBtn"),
+  manualOpenBtn: document.querySelector("#manualOpenBtn")
 };
 
 let state = null;
 let selectedSlug = "";
 let noticeTimer = null;
 let localLoading = false;
+let pendingManualEntry = null;
+let pendingManualMode = "open";
+let plannerCursor = new Date();
+const selectedScheduleIds = new Set();
 
 async function refresh({ quiet = false } = {}) {
   try {
@@ -56,6 +80,8 @@ function render() {
   renderPreview();
   renderActionOptions();
   renderCalendar();
+  renderPlannerControls();
+  renderPlanner();
   renderLog();
   setBusyState(Boolean(state.activeJob));
   syncJobLoader();
@@ -71,6 +97,8 @@ function renderArticleOptions(articles) {
     selectedSlug = current;
   }
   if (!els.scheduleDate.value) els.scheduleDate.value = defaultScheduleDate();
+  if (!els.scheduleHour.options.length) populateTimeControls();
+  if (!els.scheduleHour.value) setDefaultScheduleTime();
 }
 
 function renderArticles(articles) {
@@ -137,31 +165,50 @@ function renderActionOptions() {
 }
 
 function apiConfigured(platform) {
-  return {
-    devto: Boolean(state?.hasDevtoKey),
-    hashnode: Boolean(state?.hasHashnodeKey),
-    forem: Boolean(state?.hasForemKey)
-  }[platform] || false;
+  return platform === "devto" && Boolean(state?.hasDevtoKey);
+}
+
+function isManualEntry(entry) {
+  return !API_PLATFORMS.has(entry.platform) || (entry.action || "manual") === "manual";
 }
 
 function renderCalendar() {
   const calendar = state.calendar || [];
-  const activeEntries = calendar.filter((entry) => !["completed", "failed"].includes(entry.status));
-  const historyEntries = calendar.filter((entry) => ["completed", "failed"].includes(entry.status)).reverse();
+  const activeEntries = calendar.filter((entry) => !isFinalStatus(entry.status));
+  const historyEntries = calendar.filter((entry) => isFinalStatus(entry.status)).reverse();
+  pruneSelectedScheduleIds(calendar);
   els.calendar.innerHTML = activeEntries.length ? activeEntries.map(renderCalendarItem).join("") : `<div class="empty">No pending scheduled posts.</div>`;
-  els.history.innerHTML = historyEntries.length ? historyEntries.map(renderCalendarItem).join("") : `<div class="empty">No completed or failed schedule entries yet.</div>`;
+  els.history.innerHTML = historyEntries.length ? historyEntries.map(renderCalendarItem).join("") : `<div class="empty">No completed, cancelled, or failed schedule entries yet.</div>`;
+  updateBulkButtons(activeEntries, historyEntries);
 
   for (const button of document.querySelectorAll("[data-cancel-schedule]")) {
-    button.addEventListener("click", () => cancelSchedule(button.dataset.cancelSchedule));
+    button.addEventListener("click", () => deleteScheduleIds([button.dataset.cancelSchedule], "Removing schedule entry..."));
+  }
+  for (const checkbox of document.querySelectorAll("[data-select-schedule]")) {
+    checkbox.addEventListener("change", () => toggleScheduleSelection(checkbox.dataset.selectSchedule, checkbox.checked));
+  }
+  for (const button of document.querySelectorAll("[data-open-manual]")) {
+    button.addEventListener("click", () => showManualWarning(button.dataset.openManual));
+  }
+  for (const button of document.querySelectorAll("[data-record-manual]")) {
+    button.addEventListener("click", () => recordManualSuccess(button.dataset.recordManual));
   }
 }
 
 function renderCalendarItem(entry) {
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
-  const canCancel = ["pending", "due"].includes(entry.status);
+  const isActive = ["pending", "due"].includes(entry.status);
+  const buttonLabel = isActive ? "Cancel" : "Remove";
   const error = entry.lastError ? `<span class="calendar-error">${escapeHtml(entry.lastError)}</span>` : "";
+  const manualControls = isActive && isManualEntry(entry) ? `
+    <button type="button" class="small" data-open-manual="${escapeAttr(entry.id)}">Open</button>
+    <button type="button" class="small" data-record-manual="${escapeAttr(entry.id)}">Record success</button>
+  ` : "";
   return `
     <div class="calendar-item ${escapeHtml(entry.status)}">
+      <label class="select-box" title="Select schedule entry">
+        <input type="checkbox" data-select-schedule="${escapeAttr(entry.id)}" ${selectedScheduleIds.has(entry.id) ? "checked" : ""}>
+      </label>
       <div>
         <strong>${escapeHtml(article?.title || entry.slug)}</strong>
         <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)} - ${formatDateTime(entry.date)}</span>
@@ -169,10 +216,149 @@ function renderCalendarItem(entry) {
       </div>
       <div class="calendar-controls">
         <b>${escapeHtml(entry.status)}</b>
-        ${canCancel ? `<button type="button" class="danger small" data-cancel-schedule="${escapeAttr(entry.id)}">Cancel</button>` : ""}
+        ${manualControls}
+        <button type="button" class="danger small" data-cancel-schedule="${escapeAttr(entry.id)}">${buttonLabel}</button>
       </div>
     </div>
   `;
+}
+
+function renderPlanner() {
+  const entries = [...(state.calendar || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const visibleDays = plannerDays();
+
+  const days = new Map();
+  for (const entry of entries) {
+    const key = dateKey(entry.date);
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(entry);
+  }
+
+  els.planner.className = "planner-grid calendar-grid";
+  els.planner.innerHTML = `
+    ${weekdayHeader().map((day) => `<div class="planner-weekday">${day}</div>`).join("")}
+    ${visibleDays.map((day) => {
+      const key = dateKey(day);
+      const dayEntries = days.get(key) || [];
+      const weekend = isWeekend(day);
+      const outsideMonth = els.plannerMode.value === "month" && day.getMonth() !== plannerCursor.getMonth();
+      return `
+    <section class="planner-day ${weekend ? "disabled" : ""} ${outsideMonth ? "outside-month" : ""}">
+      <header>
+        <div>
+          <strong>${escapeHtml(formatPlannerDay(day))}</strong>
+          ${weekend ? `<small>Weekend disabled</small>` : ""}
+        </div>
+        <span>${dayEntries.length} post${dayEntries.length === 1 ? "" : "s"}</span>
+      </header>
+      <div class="planner-stack">
+        ${dayEntries.length ? dayEntries.map(renderPlannerCard).join("") : `<div class="planner-empty">No posts</div>`}
+      </div>
+    </section>
+      `;
+    }).join("")}
+  `;
+
+  for (const button of document.querySelectorAll("[data-planner-open]")) {
+    button.addEventListener("click", () => showManualWarning(button.dataset.plannerOpen));
+  }
+  for (const button of document.querySelectorAll("[data-planner-record]")) {
+    button.addEventListener("click", () => recordManualSuccess(button.dataset.plannerRecord));
+  }
+  for (const button of document.querySelectorAll("[data-planner-cancel]")) {
+    button.addEventListener("click", () => showManualCancelWarning(button.dataset.plannerCancel));
+  }
+}
+
+function renderPlannerControls() {
+  if (!els.plannerMonth.options.length) {
+    const formatter = new Intl.DateTimeFormat([], { month: "long" });
+    els.plannerMonth.innerHTML = Array.from({ length: 12 }, (_, index) => (
+      `<option value="${index}">${formatter.format(new Date(2026, index, 1))}</option>`
+    )).join("");
+  }
+
+  const calendarYears = (state.calendar || [])
+    .map((entry) => new Date(entry.date).getFullYear())
+    .filter((year) => Number.isFinite(year));
+  const currentYear = new Date().getFullYear();
+  const years = [...new Set([currentYear - 1, currentYear, currentYear + 1, ...calendarYears])].sort((a, b) => a - b);
+  const selectedYear = plannerCursor.getFullYear();
+  els.plannerYear.innerHTML = years.map((year) => `<option value="${year}">${year}</option>`).join("");
+  els.plannerMonth.value = String(plannerCursor.getMonth());
+  els.plannerYear.value = String(years.includes(selectedYear) ? selectedYear : currentYear);
+  els.plannerMonth.disabled = els.plannerMode.value !== "month";
+  els.plannerYear.disabled = els.plannerMode.value !== "month";
+}
+
+function plannerDays() {
+  if (els.plannerMode.value === "month") {
+    const year = Number(els.plannerYear.value || plannerCursor.getFullYear());
+    const month = Number(els.plannerMonth.value || plannerCursor.getMonth());
+    const start = startOfWeek(new Date(year, month, 1));
+    const end = endOfWeek(new Date(year, month + 1, 0));
+    return dateRange(start, end);
+  }
+
+  const start = startOfWeek(plannerCursor);
+  return Array.from({ length: 14 }, (_, index) => addDays(start, index));
+}
+
+function weekdayHeader() {
+  return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+}
+
+function renderPlannerCard(entry) {
+  const article = (state.articles || []).find((item) => item.slug === entry.slug);
+  const manual = isManualEntry(entry);
+  const active = ["pending", "due"].includes(entry.status);
+  const statusLabel = entry.status === "cancelled" ? "Cancelled" : manual ? "Manual" : "API";
+  return `
+    <article class="planner-card ${escapeHtml(entry.status)} ${manual ? "manual" : "api"}">
+      <div class="planner-time">${escapeHtml(formatTime(entry.date))}</div>
+      <div class="planner-body">
+        <strong>${escapeHtml(article?.title || entry.slug)}</strong>
+        <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)}</span>
+      </div>
+      <b>${escapeHtml(statusLabel)}</b>
+      ${manual && active ? `
+        <div class="planner-actions">
+          <button type="button" class="small" data-planner-open="${escapeAttr(entry.id)}">Open</button>
+          <button type="button" class="danger small" data-planner-cancel="${escapeAttr(entry.id)}">Cancel post</button>
+        </div>
+      ` : ""}
+    </article>
+  `;
+}
+
+function pruneSelectedScheduleIds(calendar) {
+  const validIds = new Set(calendar.map((entry) => entry.id));
+  for (const id of [...selectedScheduleIds]) {
+    if (!validIds.has(id)) selectedScheduleIds.delete(id);
+  }
+}
+
+function toggleScheduleSelection(id, selected) {
+  if (selected) selectedScheduleIds.add(id);
+  else selectedScheduleIds.delete(id);
+  renderCalendar();
+}
+
+function updateBulkButtons(activeEntries, historyEntries) {
+  const activeSelected = selectedCount(activeEntries);
+  const historySelected = selectedCount(historyEntries);
+  els.deleteScheduledBtn.textContent = activeSelected ? `Cancel selected (${activeSelected})` : "Cancel selected";
+  els.deleteHistoryBtn.textContent = historySelected ? `Remove selected (${historySelected})` : "Remove selected";
+  els.deleteScheduledBtn.disabled = activeSelected === 0;
+  els.deleteHistoryBtn.disabled = historySelected === 0;
+  els.selectScheduledBtn.disabled = activeEntries.length === 0;
+  els.clearScheduledBtn.disabled = activeSelected === 0;
+  els.selectHistoryBtn.disabled = historyEntries.length === 0;
+  els.clearHistoryBtn.disabled = historySelected === 0;
+}
+
+function selectedCount(entries) {
+  return entries.filter((entry) => selectedScheduleIds.has(entry.id)).length;
 }
 
 function renderLog() {
@@ -187,7 +373,16 @@ function setBusyState(busy) {
   if (!busy) {
     for (const button of document.querySelectorAll("button")) button.disabled = false;
     renderActionOptions();
+    updateBulkButtonsFromState();
   }
+}
+
+function updateBulkButtonsFromState() {
+  const calendar = state.calendar || [];
+  updateBulkButtons(
+    calendar.filter((entry) => !isFinalStatus(entry.status)),
+    calendar.filter((entry) => isFinalStatus(entry.status))
+  );
 }
 
 function selectArticle(slug) {
@@ -225,7 +420,7 @@ async function run(path, body = null, loadingText = "Working...") {
 async function addSchedule(event) {
   event.preventDefault();
   const slug = els.scheduleSlug.value.trim();
-  const isoDate = localDateTimeToIso(els.scheduleDate.value);
+  const isoDate = scheduleControlsToIso();
   if (!slug) return showNotice("Select an article before scheduling.", "error");
   if (!isoDate) return showNotice("Select a valid schedule date and time.", "error");
 
@@ -258,43 +453,175 @@ async function addSchedule(event) {
 }
 
 async function cancelSchedule(id) {
+  return deleteScheduleIds([id], "Removing schedule entry...");
+}
+
+async function deleteSelectedSchedules(scope) {
+  const entries = state.calendar || [];
+  const scopedEntries = entries.filter((entry) => {
+    const isHistory = isFinalStatus(entry.status);
+    return scope === "history" ? isHistory : !isHistory;
+  });
+  const ids = scopedEntries.map((entry) => entry.id).filter((id) => selectedScheduleIds.has(id));
+  if (!ids.length) return showNotice("Select at least one schedule entry.", "error");
+
+  await deleteScheduleIds(ids, scope === "history" ? "Removing selected history..." : "Cancelling selected schedules...");
+}
+
+async function deleteScheduleIds(ids, loadingText) {
   localLoading = true;
-  setLoading(true, "Cancelling schedule...");
+  setLoading(true, loadingText);
   try {
-    const response = await fetch(`/api/calendar?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const response = await fetch("/api/calendar/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids })
+    });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      showNotice(payload.error || "Could not cancel schedule entry.", "error");
+    if (!response.ok && response.status !== 207) {
+      showNotice(payload.error || "Could not delete selected entries.", "error");
       return;
     }
+    for (const id of ids) selectedScheduleIds.delete(id);
     await refresh({ quiet: true });
-    showNotice("Schedule entry cancelled.", "success");
+    const failed = payload.failed?.length || 0;
+    showNotice(failed ? `Removed ${payload.deleted || 0}; ${failed} failed.` : `Removed ${payload.deleted || ids.length} schedule entry${(payload.deleted || ids.length) === 1 ? "" : "ies"}.`, failed ? "error" : "success");
   } finally {
     localLoading = false;
     syncJobLoader();
   }
 }
 
+function selectScheduleScope(scope, selected) {
+  const entries = state.calendar || [];
+  for (const entry of entries) {
+    const isHistory = isFinalStatus(entry.status);
+    if ((scope === "history" && isHistory) || (scope === "active" && !isHistory)) {
+      if (selected) selectedScheduleIds.add(entry.id);
+      else selectedScheduleIds.delete(entry.id);
+    }
+  }
+  renderCalendar();
+}
+
 async function prepareMedium(slug) {
+  return prepareManualPlatform("medium", slug);
+}
+
+async function prepareManualPlatform(platform, slug) {
   localLoading = true;
-  setLoading(true, "Preparing Medium copy...");
+  setLoading(true, `Preparing ${platformLabel(platform)} copy...`);
   try {
-    const response = await fetch(`/api/platform/medium?slug=${encodeURIComponent(slug)}`);
+    const response = await fetch(`/api/platform/${encodeURIComponent(platform)}?slug=${encodeURIComponent(slug)}`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      showNotice(payload.error || "Could not load Medium draft.", "error");
+      showNotice(payload.error || `Could not load ${platformLabel(platform)} draft.`, "error");
       return;
     }
     await writeRichClipboard(payload);
-    window.open("https://medium.com/new-story", "_blank", "noopener,noreferrer");
-    showNotice("Medium content copied. Paste it into the Medium editor and schedule manually.", "success");
+    if (payload.openUrl) window.open(payload.openUrl, "_blank", "noopener,noreferrer");
+    showNotice(`${platformLabel(platform)} content copied. Schedule or publish manually, then record success here.`, "success");
   } catch {
-    showNotice("Could not copy Medium content. Check browser clipboard permission.", "error");
+    showNotice(`Could not copy ${platformLabel(platform)} content. Check browser clipboard permission.`, "error");
   } finally {
     localLoading = false;
     syncJobLoader();
   }
 }
+
+function showManualWarning(id) {
+  const entry = (state.calendar || []).find((item) => item.id === id);
+  if (!entry) return showNotice("Schedule entry not found.", "error");
+  pendingManualEntry = entry;
+  pendingManualMode = "open";
+  const article = (state.articles || []).find((item) => item.slug === entry.slug);
+  els.manualModalText.textContent = `${platformLabel(entry.platform)} does not have a working API connection. The draft will be copied and the platform page will open. After you schedule or publish it there, return here and click Record success for "${article?.title || entry.slug}".`;
+  els.manualOpenBtn.textContent = "Copy and Open Platform";
+  els.manualConfirmCancelBtn.hidden = true;
+  els.manualModal.hidden = false;
+}
+
+function showManualCancelWarning(id) {
+  const entry = (state.calendar || []).find((item) => item.id === id);
+  if (!entry) return showNotice("Schedule entry not found.", "error");
+  pendingManualEntry = entry;
+  pendingManualMode = "cancel";
+  const article = (state.articles || []).find((item) => item.slug === entry.slug);
+  els.manualModalText.textContent = `Before recording this as cancelled, open ${platformLabel(entry.platform)} and cancel or remove the scheduled draft manually. After that, click Record Cancelled for "${article?.title || entry.slug}".`;
+  els.manualOpenBtn.textContent = "Copy and Open Platform";
+  els.manualConfirmCancelBtn.hidden = false;
+  els.manualModal.hidden = false;
+}
+
+function closeManualModal() {
+  pendingManualEntry = null;
+  pendingManualMode = "open";
+  els.manualModal.hidden = true;
+  els.manualConfirmCancelBtn.hidden = true;
+}
+
+async function openPendingManualEntry() {
+  if (!pendingManualEntry) return;
+  const entry = pendingManualEntry;
+  closeManualModal();
+  await prepareManualPlatform(entry.platform, entry.slug);
+}
+
+async function confirmManualCancelled() {
+  if (!pendingManualEntry) return;
+  const entry = pendingManualEntry;
+  closeManualModal();
+  await recordManualCancelled(entry.id);
+}
+
+async function recordManualSuccess(id) {
+  const entry = (state.calendar || []).find((item) => item.id === id);
+  if (!entry) return showNotice("Schedule entry not found.", "error");
+  localLoading = true;
+  setLoading(true, "Recording manual success...");
+  try {
+    const response = await fetch("/api/calendar/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, platform: entry.platform })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showNotice(payload.error || "Could not record manual success.", "error");
+      return;
+    }
+    await refresh({ quiet: true });
+    showNotice(`${platformLabel(entry.platform)} manual schedule recorded.`, "success");
+  } finally {
+    localLoading = false;
+    syncJobLoader();
+  }
+}
+
+async function recordManualCancelled(id) {
+  const entry = (state.calendar || []).find((item) => item.id === id);
+  if (!entry) return showNotice("Schedule entry not found.", "error");
+  localLoading = true;
+  setLoading(true, "Recording manual cancellation...");
+  try {
+    const response = await fetch("/api/calendar/cancel-manual", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, platform: entry.platform })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showNotice(payload.error || "Could not record manual cancellation.", "error");
+      return;
+    }
+    await refresh({ quiet: true });
+    showNotice(`${platformLabel(entry.platform)} manual cancellation recorded.`, "success");
+  } finally {
+    localLoading = false;
+    syncJobLoader();
+  }
+}
+
 
 async function writeRichClipboard(payload) {
   if (window.ClipboardItem && payload.html) {
@@ -353,24 +680,110 @@ function formatDate(value) {
 }
 
 function formatDateTime(value) {
-  return value ? new Date(value).toLocaleString() : "-";
+  return value ? new Date(value).toLocaleString([], {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }) : "-";
+}
+
+function formatTime(value) {
+  return value ? new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true }) : "-";
+}
+
+function isFinalStatus(status) {
+  return ["completed", "failed", "cancelled"].includes(status);
+}
+
+function dateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatPlannerDay(value) {
+  const date = value instanceof Date ? value : new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "Unscheduled";
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function defaultScheduleDate() {
   const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
   date.setMinutes(0, 0, 0);
-  return toDateTimeLocal(date);
+  return toDateInput(date);
 }
 
-function toDateTimeLocal(date) {
+function populateTimeControls() {
+  els.scheduleHour.innerHTML = Array.from({ length: 12 }, (_, index) => {
+    const hour = index + 1;
+    return `<option value="${hour}">${hour}</option>`;
+  }).join("");
+  els.scheduleMinute.innerHTML = Array.from({ length: 12 }, (_, index) => {
+    const minute = String(index * 5).padStart(2, "0");
+    return `<option value="${minute}">${minute}</option>`;
+  }).join("");
+  setDefaultScheduleTime();
+}
+
+function setDefaultScheduleTime() {
+  const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  date.setMinutes(0, 0, 0);
+  const hour24 = date.getHours();
+  const hour12 = hour24 % 12 || 12;
+  els.scheduleHour.value = String(hour12);
+  els.scheduleMinute.value = String(date.getMinutes()).padStart(2, "0");
+  els.scheduleAmPm.value = hour24 >= 12 ? "PM" : "AM";
+}
+
+function toDateInput(date) {
   const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function localDateTimeToIso(value) {
-  if (!value) return "";
-  const date = new Date(value);
+function scheduleControlsToIso() {
+  if (!els.scheduleDate.value) return "";
+  let hour = Number(els.scheduleHour.value);
+  const minute = Number(els.scheduleMinute.value);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+  if (els.scheduleAmPm.value === "PM" && hour !== 12) hour += 12;
+  if (els.scheduleAmPm.value === "AM" && hour === 12) hour = 0;
+  const [year, month, day] = els.scheduleDate.value.split("-").map(Number);
+  const date = new Date(year, month - 1, day, hour, minute, 0, 0);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function startOfWeek(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(date, offset);
+}
+
+function endOfWeek(value) {
+  return addDays(startOfWeek(value), 6);
+}
+
+function addDays(value, amount) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + amount);
+  return date;
+}
+
+function dateRange(start, end) {
+  const days = [];
+  for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
+    days.push(new Date(day));
+  }
+  return days;
+}
+
+function isWeekend(value) {
+  const day = value.getDay();
+  return day === 0 || day === 6;
 }
 
 function platformLabel(value) {
@@ -379,12 +792,9 @@ function platformLabel(value) {
     medium: "Medium",
     hashnode: "Hashnode",
     tumblr: "Tumblr",
-    forem: "Forem",
     hubspot: "HubSpot",
     substack: "Substack",
-    quora: "Quora",
-    hackernoon: "HackerNoon",
-    wakelet: "Wakelet"
+    quora: "Quora"
   }[value] || value;
 }
 
@@ -416,7 +826,47 @@ els.scheduleBtn.addEventListener("click", () => run("/api/schedule", null, "Proc
 els.scheduleForm.addEventListener("submit", addSchedule);
 els.scheduleSlug.addEventListener("change", () => selectArticle(els.scheduleSlug.value));
 els.schedulePlatform.addEventListener("change", renderActionOptions);
+els.plannerMode.addEventListener("change", () => {
+  renderPlannerControls();
+  renderPlanner();
+});
+els.plannerMonth.addEventListener("change", () => {
+  plannerCursor = new Date(Number(els.plannerYear.value), Number(els.plannerMonth.value), 1);
+  renderPlanner();
+});
+els.plannerYear.addEventListener("change", () => {
+  plannerCursor = new Date(Number(els.plannerYear.value), Number(els.plannerMonth.value), 1);
+  renderPlannerControls();
+  renderPlanner();
+});
+els.plannerTodayBtn.addEventListener("click", () => {
+  plannerCursor = new Date();
+  els.plannerMode.value = "two-weeks";
+  renderPlannerControls();
+  renderPlanner();
+});
 els.search.addEventListener("input", render);
+els.selectScheduledBtn.addEventListener("click", () => selectScheduleScope("active", true));
+els.clearScheduledBtn.addEventListener("click", () => selectScheduleScope("active", false));
+els.deleteScheduledBtn.addEventListener("click", () => deleteSelectedSchedules("active"));
+els.selectHistoryBtn.addEventListener("click", () => selectScheduleScope("history", true));
+els.clearHistoryBtn.addEventListener("click", () => selectScheduleScope("history", false));
+els.deleteHistoryBtn.addEventListener("click", () => deleteSelectedSchedules("history"));
+els.manualCancelBtn.addEventListener("click", closeManualModal);
+els.manualConfirmCancelBtn.addEventListener("click", confirmManualCancelled);
+els.manualOpenBtn.addEventListener("click", openPendingManualEntry);
+for (const tab of document.querySelectorAll("[data-view-tab]")) {
+  tab.addEventListener("click", () => setView(tab.dataset.viewTab));
+}
 
 refresh();
 setInterval(() => refresh({ quiet: true }), 5000);
+
+function setView(view) {
+  for (const tab of document.querySelectorAll("[data-view-tab]")) {
+    tab.classList.toggle("selected", tab.dataset.viewTab === view);
+  }
+  for (const panel of document.querySelectorAll("[data-view]")) {
+    panel.hidden = panel.dataset.view !== view;
+  }
+}

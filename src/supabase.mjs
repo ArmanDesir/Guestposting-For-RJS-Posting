@@ -41,19 +41,66 @@ export async function insertScheduledPost(entry, env = process.env) {
 }
 
 export async function deleteScheduledPost(id, env = process.env) {
-  const rows = await supabaseRequest(
-    `/${CALENDAR_TABLE}?id=eq.${encodeURIComponent(id)}&status=eq.pending`,
-    {
-      method: "DELETE",
-      headers: { "prefer": "return=representation" }
-    },
+  const rows = await deleteScheduledPostById(id, env);
+  if (rows?.length) return;
+
+  const fallbackRows = await deleteScheduledPostByParts(id, env);
+  if (fallbackRows?.length) return;
+
+  const error = new Error("Schedule entry was not found.");
+  error.status = 404;
+  throw error;
+}
+
+async function deleteScheduledPostById(id, env) {
+  return supabaseRequest(
+    `/${CALENDAR_TABLE}?id=eq.${encodeURIComponent(id)}`,
+    deleteOptions(),
     env
   );
-  if (!rows?.length) {
-    const error = new Error("Schedule entry was not found or is no longer pending.");
-    error.status = 404;
-    throw error;
+}
+
+async function deleteScheduledPostByParts(id, env) {
+  const [rawDate, slug, platform, action = "manual"] = String(id).split("|");
+  if (!rawDate || !slug || !platform) return [];
+  const date = new Date(rawDate);
+  const dateCandidates = [
+    rawDate,
+    Number.isNaN(date.getTime()) ? "" : date.toISOString(),
+    Number.isNaN(date.getTime()) ? "" : date.toISOString().replace(".000Z", "+00:00")
+  ].filter(Boolean);
+
+  for (const candidate of [...new Set(dateCandidates)]) {
+    const query = [
+      `date=eq.${encodeURIComponent(candidate)}`,
+      `slug=eq.${encodeURIComponent(slug)}`,
+      `platform=eq.${encodeURIComponent(platform)}`,
+      `action=eq.${encodeURIComponent(action)}`
+    ].join("&");
+    const rows = await supabaseRequest(`/${CALENDAR_TABLE}?${query}`, deleteOptions(), env);
+    if (rows?.length) return rows;
   }
+  return [];
+}
+
+function deleteOptions() {
+  return {
+    method: "DELETE",
+    headers: { "prefer": "return=representation" }
+  };
+}
+
+export async function deleteScheduledPosts(ids, env = process.env) {
+  const results = [];
+  for (const id of ids) {
+    try {
+      await deleteScheduledPost(id, env);
+      results.push({ id, status: "deleted" });
+    } catch (error) {
+      results.push({ id, status: "failed", error: error.message });
+    }
+  }
+  return results;
 }
 
 export async function listDueScheduledPosts(nowIso = new Date().toISOString(), env = process.env) {
@@ -69,6 +116,15 @@ export async function listDueScheduledPosts(nowIso = new Date().toISOString(), e
 
 export async function markScheduledPostCompleted(entry, result, env = process.env) {
   await updateScheduledPost(entry, {
+    status: "completed",
+    completed_at: new Date().toISOString(),
+    last_error: null,
+    result
+  }, env);
+}
+
+export async function markScheduledPostCompletedById(id, result, env = process.env) {
+  await updateScheduledPost({ id }, {
     status: "completed",
     completed_at: new Date().toISOString(),
     last_error: null,
@@ -140,13 +196,15 @@ function calendarEntryToRow(entry) {
 }
 
 function rowToCalendarEntry(row) {
+  const resultStatus = row.result?.status || "";
+  const status = resultStatus === "manual-cancelled" ? "cancelled" : row.status || "pending";
   return {
     id: row.id,
     date: row.date,
     slug: row.slug,
     platform: row.platform,
     action: row.action || "manual",
-    status: row.status || "pending",
+    status,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     lastError: row.last_error,
