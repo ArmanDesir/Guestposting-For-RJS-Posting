@@ -57,7 +57,8 @@ async function handleApi(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/calendar") {
     const body = await readBody(req);
-    const entry = normalizeCalendarEntry(body);
+    const env = await readEnv();
+    const entry = normalizeCalendarEntry(body, env);
     if (entry.error) return sendJson(res, 400, { error: entry.error });
     const calendar = await readJson(CALENDAR_FILE, []);
     if (calendar.some((item) => calendarKey(item) === calendarKey(entry))) {
@@ -105,6 +106,7 @@ async function getStatus() {
   const schedulerState = await readJson(join(ROOT, "data/scheduler-state.json"), { completed: [] });
   const articles = await listArticles();
   const enrichedCalendar = calendar.map((entry) => calendarStatus(entry, schedulerState));
+  const env = await readEnv();
   return {
     index,
     articles,
@@ -112,7 +114,9 @@ async function getStatus() {
     schedulerState,
     activeJob,
     jobs: jobs.slice(-20).reverse(),
-    hasDevtoKey: Boolean((await readEnv()).DEVTO_API_KEY)
+    hasDevtoKey: Boolean(env.DEVTO_API_KEY),
+    hasHashnodeKey: Boolean(env.HASHNODE_API_KEY),
+    hasForemKey: Boolean(env.FOREM_API_KEY)
   };
 }
 
@@ -251,7 +255,7 @@ function isSafeSlug(value) {
   return typeof value === "string" && /^[a-z0-9][a-z0-9-]*$/i.test(value);
 }
 
-function normalizeCalendarEntry(body) {
+function normalizeCalendarEntry(body, env = {}) {
   const slug = String(body.slug || "").trim();
   const platform = String(body.platform || "").trim().toLowerCase();
   const action = String(body.action || "manual").trim().toLowerCase();
@@ -262,8 +266,8 @@ function normalizeCalendarEntry(body) {
   if (!platforms.has(platform)) return { error: "Unsupported platform." };
   if (!actions.has(action)) return { error: "Unsupported schedule action." };
   if (Number.isNaN(date.getTime())) return { error: "Invalid schedule date." };
-  if (action !== "manual" && !["devto", "hashnode", "forem"].includes(platform)) {
-    return { error: `${platform} is manual schedule only until official API access is configured.` };
+  if (action !== "manual" && !apiConfigured(platform, env)) {
+    return { error: `${platform} has no configured official API access. Use manual schedule for this platform.` };
   }
   return {
     date: date.toISOString(),
@@ -272,6 +276,14 @@ function normalizeCalendarEntry(body) {
     action,
     createdAt: new Date().toISOString()
   };
+}
+
+function apiConfigured(platform, env) {
+  return {
+    devto: Boolean(env.DEVTO_API_KEY),
+    hashnode: Boolean(env.HASHNODE_API_KEY),
+    forem: Boolean(env.FOREM_API_KEY)
+  }[platform] || false;
 }
 
 function calendarKey(entry) {

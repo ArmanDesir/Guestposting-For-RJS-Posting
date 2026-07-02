@@ -15,23 +15,19 @@
     <div class="actions">
       <button id="pullBtn" class="primary">Pull Latest</button>
       <button id="exportBtn">Regenerate Drafts</button>
-      <button id="scheduleBtn">Run Schedule</button>
+      <button id="scheduleBtn">Process Due</button>
     </div>
   </header>
 
   <main>
     <section class="status-strip">
       <div>
-        <span>DEV.to API</span>
-        <strong id="devtoKey">Checking</strong>
-      </div>
-      <div>
         <span>Articles</span>
         <strong id="articleCount">0</strong>
       </div>
       <div>
-        <span>Last Pull</span>
-        <strong id="lastPull">-</strong>
+        <span>DEV.to API</span>
+        <strong id="devtoKey">Checking</strong>
       </div>
       <div>
         <span>Active Job</span>
@@ -39,35 +35,24 @@
       </div>
     </section>
 
-    <section class="split">
-      <div class="panel">
+    <section class="workspace">
+      <div class="panel article-panel">
         <div class="panel-head">
-          <h2>Latest Articles</h2>
+          <div>
+            <h2>Articles</h2>
+            <p class="hint">Select a title to preview and schedule it.</p>
+          </div>
           <input id="search" type="search" placeholder="Search articles">
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Article</th>
-                <th>Date</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="articles"></tbody>
-          </table>
-        </div>
+        <div id="articles" class="article-list"></div>
       </div>
 
-      <aside class="panel side">
+      <aside class="panel side scheduler-panel">
         <h2>Schedule Post</h2>
+        <div id="notice" class="notice" hidden></div>
         <form id="scheduleForm" class="schedule-form">
           <label>
-            Article
-            <input id="scheduleSlug" name="slug" readonly placeholder="Select an article">
-          </label>
-          <label>
-            Platform
+            1. Site
             <select id="schedulePlatform" name="platform">
               <option value="devto">DEV.to</option>
               <option value="medium">Medium</option>
@@ -82,7 +67,7 @@
             </select>
           </label>
           <label>
-            Action
+            2. Action
             <select id="scheduleAction" name="action">
               <option value="manual">Manual schedule</option>
               <option value="draft">API draft</option>
@@ -90,21 +75,32 @@
             </select>
           </label>
           <label>
-            Date and time
+            3. Date and time
             <input id="scheduleDate" name="date" type="datetime-local">
           </label>
+          <label>
+            4. Article
+            <select id="scheduleSlug" name="slug"></select>
+          </label>
+          <div id="preview" class="preview empty">Select an article to preview.</div>
           <button class="primary" type="submit">Add Schedule</button>
         </form>
 
-        <h2 class="section-title">Posting Calendar</h2>
+        <h2 class="section-title">Calendar</h2>
         <div id="calendar" class="calendar-list"></div>
-
-        <h2 class="section-title">Run Log</h2>
-        <pre id="log">No jobs yet.</pre>
       </aside>
+    </section>
+
+    <section class="panel log-panel">
+      <h2>Activity</h2>
+      <pre id="log">No jobs yet.</pre>
     </section>
   </main>
 
+  <div id="loader" class="loader" hidden>
+    <div></div>
+    <span>Working...</span>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>
