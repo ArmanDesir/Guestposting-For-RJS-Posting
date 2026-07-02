@@ -9,7 +9,13 @@ const els = {
   search: document.querySelector("#search"),
   pullBtn: document.querySelector("#pullBtn"),
   exportBtn: document.querySelector("#exportBtn"),
-  scheduleBtn: document.querySelector("#scheduleBtn")
+  scheduleBtn: document.querySelector("#scheduleBtn"),
+  scheduleForm: document.querySelector("#scheduleForm"),
+  scheduleSlug: document.querySelector("#scheduleSlug"),
+  schedulePlatform: document.querySelector("#schedulePlatform"),
+  scheduleAction: document.querySelector("#scheduleAction"),
+  scheduleDate: document.querySelector("#scheduleDate"),
+  calendar: document.querySelector("#calendar")
 };
 
 let state = null;
@@ -30,7 +36,7 @@ function render() {
   els.summary.textContent = state.index ? `Newsroom source: ${state.index.source} · ${state.index.count} pulled` : "Run Pull Latest to build the local archive.";
 
   const busy = Boolean(state.activeJob);
-  for (const button of [els.pullBtn, els.exportBtn, els.scheduleBtn, ...document.querySelectorAll("[data-devto]"), ...document.querySelectorAll("[data-medium]")]) {
+  for (const button of [els.pullBtn, els.exportBtn, els.scheduleBtn, ...document.querySelectorAll("[data-devto]"), ...document.querySelectorAll("[data-medium]"), ...document.querySelectorAll("[data-schedule]")]) {
     button.disabled = busy;
   }
 
@@ -50,6 +56,7 @@ function render() {
         <div class="row-actions">
           <button data-devto="${escapeHtml(article.slug)}">DEV.to</button>
           <button data-medium="${escapeHtml(article.slug)}"> Medium</button>
+          <button data-schedule="${escapeHtml(article.slug)}">Schedule</button>
           <a class="link" href="${escapeAttr(article.originalUrl)}" target="_blank" rel="noreferrer">Source</a>
         </div>
       </td>
@@ -64,8 +71,30 @@ function render() {
     button.addEventListener("click", () => prepareMedium(button.dataset.medium));
   }
 
+  for (const button of document.querySelectorAll("[data-schedule]")) {
+    button.addEventListener("click", () => selectScheduleArticle(button.dataset.schedule));
+  }
+
+  renderCalendar();
+
   const jobs = state.jobs || [];
   els.log.textContent = jobs.length ? jobs.map(formatJob).join("\n\n") : "No jobs yet.";
+}
+
+function renderCalendar() {
+  const calendar = state.calendar || [];
+  els.calendar.innerHTML = calendar.length ? calendar.slice(0, 12).map((entry) => {
+    const article = (state.articles || []).find((item) => item.slug === entry.slug);
+    return `
+      <div class="calendar-item ${escapeHtml(entry.status)}">
+        <div>
+          <strong>${escapeHtml(article?.title || entry.slug)}</strong>
+          <span>${escapeHtml(entry.platform)} · ${escapeHtml(entry.action || "manual")} · ${formatDateTime(entry.date)}</span>
+        </div>
+        <b>${escapeHtml(entry.status)}</b>
+      </div>
+    `;
+  }).join("") : `<div class="empty">No scheduled posts yet.</div>`;
 }
 
 function formatJob(job) {
@@ -89,6 +118,38 @@ async function run(path, body = null) {
     alert(payload.error || "Action failed.");
   }
   await refresh();
+}
+
+async function addSchedule(event) {
+  event.preventDefault();
+  const slug = els.scheduleSlug.value.trim();
+  if (!slug) {
+    showTemporaryLog("Select an article before scheduling.");
+    return;
+  }
+  const body = {
+    slug,
+    platform: els.schedulePlatform.value,
+    action: els.scheduleAction.value,
+    date: localDateTimeToIso(els.scheduleDate.value)
+  };
+  const response = await fetch("/api/calendar", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showTemporaryLog(payload.error || "Could not add schedule entry.");
+    return;
+  }
+  showTemporaryLog(`Scheduled ${slug} for ${body.platform} (${body.action}).`);
+  await refresh();
+}
+
+function selectScheduleArticle(slug) {
+  els.scheduleSlug.value = slug;
+  if (!els.scheduleDate.value) els.scheduleDate.value = defaultScheduleDate();
 }
 
 async function prepareMedium(slug) {
@@ -185,6 +246,25 @@ function formatDate(value) {
   return value ? new Date(value).toLocaleDateString() : "-";
 }
 
+function formatDateTime(value) {
+  return value ? new Date(value).toLocaleString() : "-";
+}
+
+function defaultScheduleDate() {
+  const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  date.setMinutes(0, 0, 0);
+  return toDateTimeLocal(date);
+}
+
+function toDateTimeLocal(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function localDateTimeToIso(value) {
+  return value ? new Date(value).toISOString() : "";
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
     "&": "&amp;",
@@ -202,6 +282,7 @@ function escapeAttr(value) {
 els.pullBtn.addEventListener("click", () => run("/api/pull"));
 els.exportBtn.addEventListener("click", () => run("/api/export"));
 els.scheduleBtn.addEventListener("click", () => run("/api/schedule"));
+els.scheduleForm.addEventListener("submit", addSchedule);
 els.search.addEventListener("input", render);
 
 refresh();

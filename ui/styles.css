@@ -149,6 +149,96 @@ input[type="search"] {
   padding: 0 10px;
 }
 
+input,
+select {
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: white;
+  color: var(--text);
+  font: inherit;
+}
+
+.schedule-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.schedule-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.schedule-form label input,
+.schedule-form label select {
+  width: 100%;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.section-title {
+  margin-top: 18px;
+}
+
+.calendar-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 245px;
+  overflow: auto;
+}
+
+.calendar-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.calendar-item strong,
+.calendar-item span {
+  display: block;
+}
+
+.calendar-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-item span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.calendar-item b {
+  align-self: start;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.calendar-item.due {
+  border-color: #f2b84b;
+}
+
+.calendar-item.completed {
+  border-color: #84c59b;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 10px 0;
+}
+
 .table-wrap {
   max-height: calc(100vh - 235px);
   overflow: auto;

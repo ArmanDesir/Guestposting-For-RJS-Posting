@@ -13,7 +13,7 @@ const ARTICLES_DIR = join(DATA_DIR, "articles");
 const CALENDAR_FILE = "posting-calendar.json";
 const STATE_FILE = join(DATA_DIR, "scheduler-state.json");
 const USER_AGENT = "RightJobSolutions-Syndication/1.0 (+https://rightjobsolutions.com)";
-const PLATFORMS = ["medium", "tumblr", "devto", "hashnode", "forem"];
+const PLATFORMS = ["medium", "tumblr", "devto", "hashnode", "forem", "hubspot", "substack", "quora", "hackernoon", "wakelet"];
 
 async function main() {
   await loadEnvFile();
@@ -337,7 +337,12 @@ async function exportPlatformDrafts(article) {
     tumblr: tumblrDraft(article, body),
     devto: devtoDraft(article, devtoBody),
     hashnode: hashnodeDraft(article, body),
-    forem: foremDraft(article, body)
+    forem: foremDraft(article, body),
+    hubspot: manualPlatformDraft(article, body, "hubspot"),
+    substack: manualPlatformDraft(article, body, "substack"),
+    quora: manualPlatformDraft(article, body, "quora"),
+    hackernoon: manualPlatformDraft(article, body, "hackernoon"),
+    wakelet: manualPlatformDraft(article, body, "wakelet")
   };
 
   for (const [platform, content] of Object.entries(exports)) {
@@ -427,6 +432,22 @@ function foremDraft(article, body) {
   ].join("\n");
 }
 
+function manualPlatformDraft(article, body, platform) {
+  return [
+    frontMatter({
+      title: article.meta.title,
+      canonical_url: article.meta.originalUrl,
+      source_url: article.meta.originalUrl,
+      platform,
+      publish_as: "manual"
+    }),
+    "",
+    body,
+    canonicalLink(article),
+    ""
+  ].join("\n");
+}
+
 async function runScheduler() {
   await mkdir(DATA_DIR, { recursive: true });
   const calendar = await readJson(CALENDAR_FILE, []);
@@ -468,6 +489,18 @@ async function handleScheduleEntry(entry) {
     };
   }
 
+  if ((entry.action || "manual") === "publish") {
+    if (entry.platform === "devto") return createDevtoPublish(article);
+    return {
+      status: "manual-export-ready",
+      platform: entry.platform,
+      reason: `${entry.platform} API publishing is not implemented yet. Manual scheduling/export is ready.`,
+      title: article.meta.title,
+      originalUrl: article.meta.originalUrl,
+      file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
+    };
+  }
+
   return {
     status: "manual-export-ready",
     platform: entry.platform,
@@ -478,6 +511,14 @@ async function handleScheduleEntry(entry) {
 }
 
 async function createDevtoDraft(article) {
+  return createDevtoArticle(article, false);
+}
+
+async function createDevtoPublish(article) {
+  return createDevtoArticle(article, true);
+}
+
+async function createDevtoArticle(article, published) {
   if (!process.env.DEVTO_API_KEY) {
     return {
       status: "manual-export-ready",
@@ -500,7 +541,7 @@ async function createDevtoDraft(article) {
     body: JSON.stringify({
       article: {
         title: article.meta.title,
-        published: false,
+        published,
         body_markdown: bodyMarkdown + canonicalLink(article),
         canonical_url: article.meta.originalUrl,
         description: article.meta.excerpt,
@@ -522,7 +563,7 @@ async function createDevtoDraft(article) {
 
   const body = safeJson(text);
   return {
-    status: "api-draft-created",
+    status: published ? "api-published" : "api-draft-created",
     platform: "devto",
     title: article.meta.title,
     code: response.status,

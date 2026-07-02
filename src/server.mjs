@@ -1,11 +1,13 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "ui");
+const CALENDAR_FILE = join(ROOT, "posting-calendar.json");
+const SCHEDULER_STATE_FILE = join(ROOT, "data/scheduler-state.json");
 const PORT = Number(process.env.RJS_UI_PORT || 3077);
 let activeJob = null;
 const jobs = [];
@@ -53,6 +55,19 @@ async function handleApi(req, res, url) {
     return runAction(res, "Run schedule", ["src/syndicate.mjs", "schedule"]);
   }
 
+  if (req.method === "POST" && url.pathname === "/api/calendar") {
+    const body = await readBody(req);
+    const entry = normalizeCalendarEntry(body);
+    if (entry.error) return sendJson(res, 400, { error: entry.error });
+    const calendar = await readJson(CALENDAR_FILE, []);
+    if (calendar.some((item) => calendarKey(item) === calendarKey(entry))) {
+      return sendJson(res, 409, { error: "This schedule entry already exists." });
+    }
+    const updated = [...calendar, entry].sort((a, b) => new Date(a.date) - new Date(b.date));
+    await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+    return sendJson(res, 201, { entry, calendar: updated });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/draft/devto") {
     const body = await readBody(req);
     if (!body.slug) return sendJson(res, 400, { error: "Missing slug." });
@@ -89,14 +104,26 @@ async function getStatus() {
   const calendar = await readJson(join(ROOT, "posting-calendar.json"), []);
   const schedulerState = await readJson(join(ROOT, "data/scheduler-state.json"), { completed: [] });
   const articles = await listArticles();
+  const enrichedCalendar = calendar.map((entry) => calendarStatus(entry, schedulerState));
   return {
     index,
     articles,
-    calendar,
+    calendar: enrichedCalendar,
     schedulerState,
     activeJob,
     jobs: jobs.slice(-20).reverse(),
     hasDevtoKey: Boolean((await readEnv()).DEVTO_API_KEY)
+  };
+}
+
+function calendarStatus(entry, schedulerState) {
+  const completed = new Set(schedulerState.completed || []);
+  const key = calendarKey(entry);
+  const due = new Date(entry.date).getTime() <= Date.now();
+  return {
+    ...entry,
+    id: key,
+    status: completed.has(key) ? "completed" : due ? "due" : "pending"
   };
 }
 
@@ -222,6 +249,33 @@ function sendText(res, status, text) {
 
 function isSafeSlug(value) {
   return typeof value === "string" && /^[a-z0-9][a-z0-9-]*$/i.test(value);
+}
+
+function normalizeCalendarEntry(body) {
+  const slug = String(body.slug || "").trim();
+  const platform = String(body.platform || "").trim().toLowerCase();
+  const action = String(body.action || "manual").trim().toLowerCase();
+  const date = new Date(body.date);
+  const platforms = new Set(["medium", "tumblr", "devto", "hashnode", "forem", "hubspot", "substack", "quora", "hackernoon", "wakelet"]);
+  const actions = new Set(["manual", "draft", "publish"]);
+  if (!isSafeSlug(slug)) return { error: "Missing or invalid article slug." };
+  if (!platforms.has(platform)) return { error: "Unsupported platform." };
+  if (!actions.has(action)) return { error: "Unsupported schedule action." };
+  if (Number.isNaN(date.getTime())) return { error: "Invalid schedule date." };
+  if (action !== "manual" && !["devto", "hashnode", "forem"].includes(platform)) {
+    return { error: `${platform} is manual schedule only until official API access is configured.` };
+  }
+  return {
+    date: date.toISOString(),
+    slug,
+    platform,
+    action,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function calendarKey(entry) {
+  return `${entry.date}|${entry.slug}|${entry.platform}|${entry.action || "manual"}`;
 }
 
 function mediumClipboardContent(markdown) {

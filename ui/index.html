@@ -60,7 +60,46 @@
       </div>
 
       <aside class="panel side">
-        <h2>Run Log</h2>
+        <h2>Schedule Post</h2>
+        <form id="scheduleForm" class="schedule-form">
+          <label>
+            Article
+            <input id="scheduleSlug" name="slug" readonly placeholder="Select an article">
+          </label>
+          <label>
+            Platform
+            <select id="schedulePlatform" name="platform">
+              <option value="devto">DEV.to</option>
+              <option value="medium">Medium</option>
+              <option value="hashnode">Hashnode</option>
+              <option value="tumblr">Tumblr</option>
+              <option value="forem">Forem</option>
+              <option value="hubspot">HubSpot</option>
+              <option value="substack">Substack</option>
+              <option value="quora">Quora</option>
+              <option value="hackernoon">HackerNoon</option>
+              <option value="wakelet">Wakelet</option>
+            </select>
+          </label>
+          <label>
+            Action
+            <select id="scheduleAction" name="action">
+              <option value="manual">Manual schedule</option>
+              <option value="draft">API draft</option>
+              <option value="publish">API publish</option>
+            </select>
+          </label>
+          <label>
+            Date and time
+            <input id="scheduleDate" name="date" type="datetime-local">
+          </label>
+          <button class="primary" type="submit">Add Schedule</button>
+        </form>
+
+        <h2 class="section-title">Posting Calendar</h2>
+        <div id="calendar" class="calendar-list"></div>
+
+        <h2 class="section-title">Run Log</h2>
         <pre id="log">No jobs yet.</pre>
       </aside>
     </section>
