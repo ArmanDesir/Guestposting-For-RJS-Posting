@@ -100,6 +100,11 @@ button.danger {
   color: var(--danger);
 }
 
+button.success {
+  border-color: #9ad3ae;
+  color: var(--accent-dark);
+}
+
 button.small {
   min-height: 28px;
   padding: 0 9px;
@@ -425,6 +430,7 @@ input[type="search"] {
 
 .calendar-item.completed {
   border-color: #84c59b;
+  background: #f0faf4;
 }
 
 .calendar-item.cancelled {
@@ -611,7 +617,8 @@ input[type="search"] {
 }
 
 .planner-card.completed {
-  opacity: .75;
+  border-left-color: var(--accent);
+  background: #f8fffb;
 }
 
 .planner-card.cancelled {
@@ -673,6 +680,20 @@ input[type="search"] {
 .modal p {
   margin-top: 8px;
   color: var(--muted);
+}
+
+.modal-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.modal-field input {
+  width: 100%;
+  color: var(--text);
+  font-size: 14px;
 }
 
 .modal-actions {

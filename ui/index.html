@@ -168,8 +168,13 @@
     <div class="modal">
       <h2>Manual Posting Required</h2>
       <p id="manualModalText"></p>
+      <label id="manualPublishedUrlWrap" class="modal-field" hidden>
+        Published post URL
+        <input id="manualPublishedUrl" type="url" placeholder="https://example.com/published-post">
+      </label>
       <div class="modal-actions">
         <button type="button" id="manualCancelBtn">Cancel</button>
+        <button type="button" class="primary" id="manualConfirmSuccessBtn" hidden>Record Success</button>
         <button type="button" class="danger" id="manualConfirmCancelBtn" hidden>Record Cancelled</button>
         <button type="button" class="primary" id="manualOpenBtn">Copy and Open Platform</button>
       </div>

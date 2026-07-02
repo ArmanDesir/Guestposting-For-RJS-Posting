@@ -39,7 +39,10 @@ const els = {
   loader: document.querySelector("#loader"),
   manualModal: document.querySelector("#manualModal"),
   manualModalText: document.querySelector("#manualModalText"),
+  manualPublishedUrlWrap: document.querySelector("#manualPublishedUrlWrap"),
+  manualPublishedUrl: document.querySelector("#manualPublishedUrl"),
   manualCancelBtn: document.querySelector("#manualCancelBtn"),
+  manualConfirmSuccessBtn: document.querySelector("#manualConfirmSuccessBtn"),
   manualConfirmCancelBtn: document.querySelector("#manualConfirmCancelBtn"),
   manualOpenBtn: document.querySelector("#manualOpenBtn")
 };
@@ -191,7 +194,10 @@ function renderCalendar() {
     button.addEventListener("click", () => showManualWarning(button.dataset.openManual));
   }
   for (const button of document.querySelectorAll("[data-record-manual]")) {
-    button.addEventListener("click", () => recordManualSuccess(button.dataset.recordManual));
+    button.addEventListener("click", () => showManualSuccessWarning(button.dataset.recordManual));
+  }
+  for (const button of document.querySelectorAll("[data-open-post]")) {
+    button.addEventListener("click", () => openPostUrl(button.dataset.openPost));
   }
 }
 
@@ -200,9 +206,13 @@ function renderCalendarItem(entry) {
   const isActive = ["pending", "due"].includes(entry.status);
   const buttonLabel = isActive ? "Cancel" : "Remove";
   const error = entry.lastError ? `<span class="calendar-error">${escapeHtml(entry.lastError)}</span>` : "";
+  const postUrl = postUrlForEntry(entry);
   const manualControls = isActive && isManualEntry(entry) ? `
     <button type="button" class="small" data-open-manual="${escapeAttr(entry.id)}">Open</button>
-    <button type="button" class="small" data-record-manual="${escapeAttr(entry.id)}">Record success</button>
+    <button type="button" class="small success" data-record-manual="${escapeAttr(entry.id)}">Record success</button>
+  ` : "";
+  const openPostControl = postUrl && isFinalStatus(entry.status) ? `
+    <button type="button" class="small" data-open-post="${escapeAttr(postUrl)}">Open post</button>
   ` : "";
   return `
     <div class="calendar-item ${escapeHtml(entry.status)}">
@@ -215,7 +225,8 @@ function renderCalendarItem(entry) {
         ${error}
       </div>
       <div class="calendar-controls">
-        <b>${escapeHtml(entry.status)}</b>
+        <b>${escapeHtml(statusLabel(entry))}</b>
+        ${openPostControl}
         ${manualControls}
         <button type="button" class="danger small" data-cancel-schedule="${escapeAttr(entry.id)}">${buttonLabel}</button>
       </div>
@@ -263,10 +274,13 @@ function renderPlanner() {
     button.addEventListener("click", () => showManualWarning(button.dataset.plannerOpen));
   }
   for (const button of document.querySelectorAll("[data-planner-record]")) {
-    button.addEventListener("click", () => recordManualSuccess(button.dataset.plannerRecord));
+    button.addEventListener("click", () => showManualSuccessWarning(button.dataset.plannerRecord));
   }
   for (const button of document.querySelectorAll("[data-planner-cancel]")) {
     button.addEventListener("click", () => showManualCancelWarning(button.dataset.plannerCancel));
+  }
+  for (const button of document.querySelectorAll("[data-planner-post]")) {
+    button.addEventListener("click", () => openPostUrl(button.dataset.plannerPost));
   }
 }
 
@@ -312,7 +326,7 @@ function renderPlannerCard(entry) {
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
   const manual = isManualEntry(entry);
   const active = ["pending", "due"].includes(entry.status);
-  const statusLabel = entry.status === "cancelled" ? "Cancelled" : manual ? "Manual" : "API";
+  const postUrl = postUrlForEntry(entry);
   return `
     <article class="planner-card ${escapeHtml(entry.status)} ${manual ? "manual" : "api"}">
       <div class="planner-time">${escapeHtml(formatTime(entry.date))}</div>
@@ -320,7 +334,12 @@ function renderPlannerCard(entry) {
         <strong>${escapeHtml(article?.title || entry.slug)}</strong>
         <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)}</span>
       </div>
-      <b>${escapeHtml(statusLabel)}</b>
+      <b>${escapeHtml(statusLabel(entry))}</b>
+      ${postUrl && isFinalStatus(entry.status) ? `
+        <div class="planner-actions">
+          <button type="button" class="small" data-planner-post="${escapeAttr(postUrl)}">Open post</button>
+        </div>
+      ` : ""}
       ${manual && active ? `
         <div class="planner-actions">
           <button type="button" class="small" data-planner-open="${escapeAttr(entry.id)}">Open</button>
@@ -537,6 +556,25 @@ function showManualWarning(id) {
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
   els.manualModalText.textContent = `${platformLabel(entry.platform)} does not have a working API connection. The draft will be copied and the platform page will open. After you schedule or publish it there, return here and click Record success for "${article?.title || entry.slug}".`;
   els.manualOpenBtn.textContent = "Copy and Open Platform";
+  els.manualOpenBtn.hidden = false;
+  els.manualPublishedUrlWrap.hidden = true;
+  els.manualPublishedUrl.value = "";
+  els.manualConfirmSuccessBtn.hidden = true;
+  els.manualConfirmCancelBtn.hidden = true;
+  els.manualModal.hidden = false;
+}
+
+function showManualSuccessWarning(id) {
+  const entry = (state.calendar || []).find((item) => item.id === id);
+  if (!entry) return showNotice("Schedule entry not found.", "error");
+  pendingManualEntry = entry;
+  pendingManualMode = "success";
+  const article = (state.articles || []).find((item) => item.slug === entry.slug);
+  els.manualModalText.textContent = `Confirm that "${article?.title || entry.slug}" has been published or scheduled successfully on ${platformLabel(entry.platform)}. Paste the final post URL if you have it, so the calendar can open it later.`;
+  els.manualPublishedUrlWrap.hidden = false;
+  els.manualPublishedUrl.value = "";
+  els.manualOpenBtn.hidden = true;
+  els.manualConfirmSuccessBtn.hidden = false;
   els.manualConfirmCancelBtn.hidden = true;
   els.manualModal.hidden = false;
 }
@@ -549,6 +587,10 @@ function showManualCancelWarning(id) {
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
   els.manualModalText.textContent = `Before recording this as cancelled, open ${platformLabel(entry.platform)} and cancel or remove the scheduled draft manually. After that, click Record Cancelled for "${article?.title || entry.slug}".`;
   els.manualOpenBtn.textContent = "Copy and Open Platform";
+  els.manualOpenBtn.hidden = false;
+  els.manualPublishedUrlWrap.hidden = true;
+  els.manualPublishedUrl.value = "";
+  els.manualConfirmSuccessBtn.hidden = true;
   els.manualConfirmCancelBtn.hidden = false;
   els.manualModal.hidden = false;
 }
@@ -557,6 +599,10 @@ function closeManualModal() {
   pendingManualEntry = null;
   pendingManualMode = "open";
   els.manualModal.hidden = true;
+  els.manualPublishedUrlWrap.hidden = true;
+  els.manualPublishedUrl.value = "";
+  els.manualOpenBtn.hidden = false;
+  els.manualConfirmSuccessBtn.hidden = true;
   els.manualConfirmCancelBtn.hidden = true;
 }
 
@@ -574,7 +620,19 @@ async function confirmManualCancelled() {
   await recordManualCancelled(entry.id);
 }
 
-async function recordManualSuccess(id) {
+async function confirmManualSuccess() {
+  if (!pendingManualEntry) return;
+  const entry = pendingManualEntry;
+  const publishedUrl = els.manualPublishedUrl.value.trim();
+  if (publishedUrl && !isValidHttpUrl(publishedUrl)) {
+    showNotice("Use a valid published URL or leave the field blank.", "error");
+    return;
+  }
+  closeManualModal();
+  await recordManualSuccess(entry.id, publishedUrl);
+}
+
+async function recordManualSuccess(id, publishedUrl = "") {
   const entry = (state.calendar || []).find((item) => item.id === id);
   if (!entry) return showNotice("Schedule entry not found.", "error");
   localLoading = true;
@@ -583,7 +641,7 @@ async function recordManualSuccess(id) {
     const response = await fetch("/api/calendar/complete", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, platform: entry.platform })
+      body: JSON.stringify({ id, platform: entry.platform, publishedUrl })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -696,6 +754,33 @@ function formatTime(value) {
 
 function isFinalStatus(status) {
   return ["completed", "failed", "cancelled"].includes(status);
+}
+
+function statusLabel(entry) {
+  if (entry.status === "completed") return "Success";
+  if (entry.status === "cancelled") return "Cancelled";
+  if (entry.status === "failed") return "Failed";
+  if (entry.status === "due") return "Due";
+  return "Pending";
+}
+
+function postUrlForEntry(entry) {
+  const result = entry.result || {};
+  return result.publishedUrl || result.url || result.draftUrl || result.canonicalUrl || "";
+}
+
+function openPostUrl(url) {
+  if (!url) return showNotice("No published post URL is stored for this entry.", "error");
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function isValidHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
 }
 
 function dateKey(value) {
@@ -853,6 +938,7 @@ els.selectHistoryBtn.addEventListener("click", () => selectScheduleScope("histor
 els.clearHistoryBtn.addEventListener("click", () => selectScheduleScope("history", false));
 els.deleteHistoryBtn.addEventListener("click", () => deleteSelectedSchedules("history"));
 els.manualCancelBtn.addEventListener("click", closeManualModal);
+els.manualConfirmSuccessBtn.addEventListener("click", confirmManualSuccess);
 els.manualConfirmCancelBtn.addEventListener("click", confirmManualCancelled);
 els.manualOpenBtn.addEventListener("click", openPendingManualEntry);
 for (const tab of document.querySelectorAll("[data-view-tab]")) {
