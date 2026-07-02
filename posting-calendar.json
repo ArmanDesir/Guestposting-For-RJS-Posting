@@ -56,6 +56,20 @@
     "createdAt": "2026-07-02T01:44:44.446Z"
   },
   {
+    "date": "2026-07-02T02:30:00.000Z",
+    "slug": "local-digital-marketing-checklist",
+    "platform": "devto",
+    "action": "manual",
+    "createdAt": "2026-07-02T02:24:25.870Z"
+  },
+  {
+    "date": "2026-07-02T02:30:00.000Z",
+    "slug": "google-ads-vs-facebook-ads-for-small-business",
+    "platform": "devto",
+    "action": "publish",
+    "createdAt": "2026-07-02T02:27:03.500Z"
+  },
+  {
     "date": "2026-07-02T05:29:10.233Z",
     "slug": "virtual-assistant-tasks-small-business",
     "platform": "devto",
@@ -73,6 +87,13 @@
     "platform": "devto",
     "action": "publish",
     "createdAt": "2026-07-02T01:45:02.533Z"
+  },
+  {
+    "date": "2026-07-03T03:10:00.000Z",
+    "slug": "content-refresh-for-ai-search",
+    "platform": "hashnode",
+    "action": "publish",
+    "createdAt": "2026-07-02T03:09:03.245Z"
   },
   {
     "date": "2026-07-03T05:29:10.233Z",

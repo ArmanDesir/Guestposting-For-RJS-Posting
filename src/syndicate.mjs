@@ -2,11 +2,21 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
+import {
+  calendarKey,
+  isSupabaseConfigured,
+  insertScheduledPost,
+  listDueScheduledPosts,
+  listScheduledPosts,
+  markScheduledPostCompleted,
+  markScheduledPostFailed
+} from "./supabase.mjs";
 
 const SITE = "https://rightjobsolutions.com";
 const POSTS_API = `${SITE}/wp-json/wp/v2/posts`;
 const CATEGORIES_API = `${SITE}/wp-json/wp/v2/categories`;
 const TAGS_API = `${SITE}/wp-json/wp/v2/tags`;
+const HASHNODE_API = "https://gql.hashnode.com/";
 const MIN_PUBLISHED_DATE = "2026-04-01T00:00:00";
 const DATA_DIR = "data";
 const ARTICLES_DIR = join(DATA_DIR, "articles");
@@ -23,6 +33,7 @@ async function main() {
   else if (command === "queue") await createPostingQueue(parseArgs(process.argv.slice(3)));
   else if (command === "draft") await createDraftFromArgs(parseArgs(process.argv.slice(3)));
   else if (command === "schedule") await runScheduler();
+  else if (command === "sync-calendar") await syncCalendarToSupabase();
   else if (command === "all") {
     await pullArticles();
     await exportAllPlatformDrafts();
@@ -312,15 +323,15 @@ async function createPostingQueue(options) {
 
 async function createDraftFromArgs(options) {
   const platform = options.platform || "devto";
-  if (platform !== "devto") {
-    throw new Error("Direct API drafting is currently only available for DEV.to.");
+  if (!["devto", "hashnode"].includes(platform)) {
+    throw new Error("Direct API drafting is currently only available for DEV.to and Hashnode.");
   }
   if (!options.slug) {
     throw new Error("Missing --slug for draft command.");
   }
   const article = await loadArticle(options.slug);
   await exportPlatformDrafts(article);
-  const result = await createDevtoDraft(article);
+  const result = platform === "hashnode" ? await createHashnodeDraft(article) : await createDevtoDraft(article);
   console.log(JSON.stringify(result, null, 2));
   if (result.status === "failed") process.exitCode = 1;
 }
@@ -450,23 +461,62 @@ function manualPlatformDraft(article, body, platform) {
 
 async function runScheduler() {
   await mkdir(DATA_DIR, { recursive: true });
-  const calendar = await readJson(CALENDAR_FILE, []);
-  const state = await readJson(STATE_FILE, { completed: [] });
-  const completed = new Set(state.completed);
+  const supabaseEnabled = isSupabaseConfigured();
+  const calendar = supabaseEnabled ? await safeListDueScheduledPosts() : await readJson(CALENDAR_FILE, []);
+  const state = supabaseEnabled ? { completed: [] } : await readJson(STATE_FILE, { completed: [] });
+  const completed = new Set(state.completed || []);
   const now = Date.now();
   const results = [];
 
   for (const entry of calendar) {
-    const id = `${entry.date}|${entry.slug}|${entry.platform}|${entry.action || "manual"}`;
+    const id = calendarKey(entry);
     if (completed.has(id)) continue;
-    if (new Date(entry.date).getTime() > now) continue;
+    if (!supabaseEnabled && new Date(entry.date).getTime() > now) continue;
     const result = await handleScheduleEntry(entry);
     results.push({ id, ...result });
-    if (result.status !== "failed") completed.add(id);
+    if (supabaseEnabled) {
+      if (result.status === "failed") await markScheduledPostFailed(entry, result);
+      else await markScheduledPostCompleted(entry, result);
+    } else if (result.status !== "failed") {
+      completed.add(id);
+    }
   }
 
-  await writeFile(STATE_FILE, JSON.stringify({ completed: [...completed], updatedAt: new Date().toISOString() }, null, 2));
+  if (!supabaseEnabled) {
+    await writeFile(STATE_FILE, JSON.stringify({ completed: [...completed], updatedAt: new Date().toISOString() }, null, 2));
+  }
   console.log(results.length ? JSON.stringify(results, null, 2) : "No due schedule entries.");
+}
+
+async function syncCalendarToSupabase() {
+  if (!isSupabaseConfigured()) {
+    throw new Error("Supabase is not configured. Set SUPABASE_URL and SUPABASE_SECRET_KEY.");
+  }
+  const localCalendar = await readJson(CALENDAR_FILE, []);
+  const remoteCalendar = await listScheduledPosts();
+  const remoteKeys = new Set(remoteCalendar.map(calendarKey));
+  let added = 0;
+  let skipped = 0;
+
+  for (const entry of localCalendar) {
+    if (remoteKeys.has(calendarKey(entry))) {
+      skipped += 1;
+      continue;
+    }
+    await insertScheduledPost(entry);
+    added += 1;
+  }
+
+  console.log(`Synced calendar to Supabase. Added: ${added}. Skipped: ${skipped}.`);
+}
+
+async function safeListDueScheduledPosts() {
+  try {
+    return await listDueScheduledPosts();
+  } catch (error) {
+    console.warn(`Supabase scheduler unavailable: ${error.message}`);
+    return [];
+  }
 }
 
 async function handleScheduleEntry(entry) {
@@ -479,10 +529,11 @@ async function handleScheduleEntry(entry) {
 
   if ((entry.action || "manual") === "draft") {
     if (entry.platform === "devto") return createDevtoDraft(article);
+    if (entry.platform === "hashnode") return createHashnodeDraft(article);
     return {
       status: "manual-export-ready",
       platform: entry.platform,
-      reason: "API drafting is only configured for DEV.to. Use action manual for this platform.",
+      reason: "API drafting is only configured for DEV.to and Hashnode. Use action manual for this platform.",
       title: article.meta.title,
       originalUrl: article.meta.originalUrl,
       file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
@@ -491,6 +542,7 @@ async function handleScheduleEntry(entry) {
 
   if ((entry.action || "manual") === "publish") {
     if (entry.platform === "devto") return createDevtoPublish(article);
+    if (entry.platform === "hashnode") return createHashnodePublish(article);
     return {
       status: "manual-export-ready",
       platform: entry.platform,
@@ -507,6 +559,184 @@ async function handleScheduleEntry(entry) {
     title: article.meta.title,
     originalUrl: article.meta.originalUrl,
     file: normalizePath(join(article.dir, "platforms", `${entry.platform}.md`))
+  };
+}
+
+async function createHashnodeDraft(article) {
+  if (!process.env.HASHNODE_API_KEY) {
+    return manualApiFallback(article, "hashnode", "Missing HASHNODE_API_KEY environment variable.");
+  }
+
+  try {
+    const publicationId = await resolveHashnodePublicationId();
+    const input = hashnodePostInput(article, publicationId);
+    const response = await hashnodeRequest(
+      `mutation CreateDraft($input: CreateDraftInput!) {
+        createDraft(input: $input) {
+          draft {
+            id
+            slug
+            title
+            canonicalUrl
+          }
+        }
+      }`,
+      { input }
+    );
+    const draft = response?.createDraft?.draft;
+    return {
+      status: "api-draft-created",
+      platform: "hashnode",
+      title: article.meta.title,
+      id: draft?.id || "",
+      slug: draft?.slug || "",
+      draftUrl: draft?.slug ? `https://hashnode.com/draft/${draft.slug}` : ""
+    };
+  } catch (error) {
+    return hashnodeFailure(article, error);
+  }
+}
+
+async function createHashnodePublish(article) {
+  if (!process.env.HASHNODE_API_KEY) {
+    return manualApiFallback(article, "hashnode", "Missing HASHNODE_API_KEY environment variable.");
+  }
+
+  try {
+    const publicationId = await resolveHashnodePublicationId();
+    const input = {
+      ...hashnodePostInput(article, publicationId),
+      publishedAt: new Date().toISOString(),
+      settings: {
+        enableTableOfContent: true,
+        isNewsletterActivated: false,
+        delisted: false
+      }
+    };
+    const response = await hashnodeRequest(
+      `mutation PublishPost($input: PublishPostInput!) {
+        publishPost(input: $input) {
+          post {
+            id
+            slug
+            title
+            url
+            canonicalUrl
+          }
+        }
+      }`,
+      { input }
+    );
+    const post = response?.publishPost?.post;
+    return {
+      status: "api-published",
+      platform: "hashnode",
+      title: article.meta.title,
+      id: post?.id || "",
+      slug: post?.slug || "",
+      draftUrl: post?.url || ""
+    };
+  } catch (error) {
+    return hashnodeFailure(article, error);
+  }
+}
+
+function hashnodePostInput(article, publicationId) {
+  const body = replaceImageMarkdown(stripExistingCanonical(article.markdown), article, (sourceUrl) => imageProxyUrl(sourceUrl, "png"));
+  const featuredImageUrl = article.meta.featuredImageSource || resolveArticleImageUrl(article, article.meta.featuredImage || "");
+  return removeEmptyValues({
+    title: article.meta.title,
+    subtitle: article.meta.excerpt,
+    publicationId,
+    contentMarkdown: `${body}${canonicalLink(article)}`,
+    slug: article.meta.slug,
+    originalArticleURL: article.meta.originalUrl,
+    tags: hashnodeTags(article),
+    coverImageOptions: featuredImageUrl ? { coverImageURL: imageProxyUrl(featuredImageUrl, "png") } : undefined,
+    settings: {
+      enableTableOfContent: true,
+      activateNewsletter: false,
+      delist: false,
+      slugOverridden: true
+    }
+  });
+}
+
+function hashnodeTags(article) {
+  const tags = article.meta.tags
+    .map((tag) => ({ name: String(tag).trim(), slug: slugify(tag).slice(0, 50) }))
+    .filter((tag) => tag.name && tag.slug);
+  return [...new Map(tags.map((tag) => [tag.slug, tag])).values()].slice(0, 5);
+}
+
+async function resolveHashnodePublicationId() {
+  if (process.env.HASHNODE_PUBLICATION_ID) return process.env.HASHNODE_PUBLICATION_ID;
+  const response = await hashnodeRequest(
+    `query CurrentUserPublications {
+      me {
+        id
+        publications(first: 10) {
+          edges {
+            node {
+              id
+              title
+              url
+            }
+          }
+        }
+      }
+    }`
+  );
+  const publication = response?.me?.publications?.edges?.[0]?.node;
+  if (!publication?.id) {
+    throw new Error("No editable Hashnode publication found for this token. Set HASHNODE_PUBLICATION_ID in .env if needed.");
+  }
+  return publication.id;
+}
+
+async function hashnodeRequest(query, variables = {}) {
+  const response = await fetch(HASHNODE_API, {
+    method: "POST",
+    headers: {
+      "authorization": process.env.HASHNODE_API_KEY,
+      "content-type": "application/json",
+      "accept": "application/json",
+      "user-agent": USER_AGENT
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const text = await response.text();
+  const json = safeJson(text);
+  if (!json) {
+    const title = text.match(/<title>([^<]+)<\/title>/i)?.[1];
+    throw new Error(`Hashnode returned non-JSON response${title ? `: ${title}` : ""}. API access may require a paid Hashnode plan.`);
+  }
+  if (!response.ok || json.errors?.length) {
+    const message = json.errors?.map((error) => error.message).join("; ") || text.slice(0, 1000);
+    throw new Error(`Hashnode API failed (${response.status}): ${message}`);
+  }
+  return json.data;
+}
+
+function hashnodeFailure(article, error) {
+  return {
+    status: "failed",
+    platform: "hashnode",
+    title: article.meta.title,
+    error: error.message,
+    file: normalizePath(join(article.dir, "platforms", "hashnode.md"))
+  };
+}
+
+function manualApiFallback(article, platform, reason) {
+  return {
+    status: "manual-export-ready",
+    platform,
+    reason,
+    title: article.meta.title,
+    originalUrl: article.meta.originalUrl,
+    file: normalizePath(join(article.dir, "platforms", `${platform}.md`))
   };
 }
 
@@ -604,6 +834,14 @@ function imageProxyUrl(sourceUrl, output) {
   return `https://wsrv.nl/?url=${encodeURIComponent(remotePath)}&output=${output}`;
 }
 
+function removeEmptyValues(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => {
+    if (entry === undefined || entry === null) return false;
+    if (Array.isArray(entry) && entry.length === 0) return false;
+    return true;
+  }));
+}
+
 
 async function check() {
   const slugs = await listArticleSlugs();
@@ -676,10 +914,6 @@ function parseStartDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error(`Invalid start date: ${value}`);
   return date;
-}
-
-function calendarKey(entry) {
-  return `${entry.date}|${entry.slug}|${entry.platform}|${entry.action || "manual"}`;
 }
 
 function htmlToMarkdown(html, articleDir) {

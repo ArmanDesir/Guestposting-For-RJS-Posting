@@ -3,13 +3,22 @@ import { execFile } from "node:child_process";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  calendarKey,
+  insertScheduledPost,
+  isSupabaseConfigured,
+  listScheduledPosts
+} from "./supabase.mjs";
 
 const ROOT = resolve(".");
 const PUBLIC_DIR = join(ROOT, "ui");
 const CALENDAR_FILE = join(ROOT, "posting-calendar.json");
 const SCHEDULER_STATE_FILE = join(ROOT, "data/scheduler-state.json");
 const PORT = Number(process.env.RJS_UI_PORT || 3077);
+const SCHEDULER_INTERVAL_MS = Number(process.env.RJS_SCHEDULER_INTERVAL_MS || 60_000);
 let activeJob = null;
+let schedulerRunning = false;
+let lastSchedulerRun = null;
 const jobs = [];
 
 const MIME = {
@@ -36,6 +45,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`RightJob syndication UI: http://localhost:${PORT}`);
+  startSchedulerLoop();
 });
 
 async function handleApi(req, res, url) {
@@ -60,13 +70,22 @@ async function handleApi(req, res, url) {
     const env = await readEnv();
     const entry = normalizeCalendarEntry(body, env);
     if (entry.error) return sendJson(res, 400, { error: entry.error });
-    const calendar = await readJson(CALENDAR_FILE, []);
-    if (calendar.some((item) => calendarKey(item) === calendarKey(entry))) {
-      return sendJson(res, 409, { error: "This schedule entry already exists." });
+    if (isSupabaseConfigured(env)) {
+      try {
+        await insertScheduledPost(entry, env);
+        return sendJson(res, 201, { entry, calendar: await listScheduledPosts(env), storage: "supabase" });
+      } catch (error) {
+        return sendJson(res, error.status || 500, { error: error.message });
+      }
+    } else {
+      const calendar = await readJson(CALENDAR_FILE, []);
+      if (calendar.some((item) => calendarKey(item) === calendarKey(entry))) {
+        return sendJson(res, 409, { error: "This schedule entry already exists." });
+      }
+      const updated = [...calendar, entry].sort((a, b) => new Date(a.date) - new Date(b.date));
+      await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+      return sendJson(res, 201, { entry, calendar: updated, storage: "local" });
     }
-    const updated = [...calendar, entry].sort((a, b) => new Date(a.date) - new Date(b.date));
-    await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
-    return sendJson(res, 201, { entry, calendar: updated });
   }
 
   if (req.method === "POST" && url.pathname === "/api/draft/devto") {
@@ -101,26 +120,31 @@ async function handleApi(req, res, url) {
 }
 
 async function getStatus() {
+  const env = await readEnv();
   const index = await readJson(join(ROOT, "data/index.json"), null);
-  const calendar = await readJson(join(ROOT, "posting-calendar.json"), []);
-  const schedulerState = await readJson(join(ROOT, "data/scheduler-state.json"), { completed: [] });
+  const supabaseEnabled = isSupabaseConfigured(env);
+  const calendar = supabaseEnabled ? await safeListScheduledPosts(env) : await readJson(join(ROOT, "posting-calendar.json"), []);
+  const schedulerState = supabaseEnabled ? { completed: [] } : await readJson(join(ROOT, "data/scheduler-state.json"), { completed: [] });
   const articles = await listArticles();
   const enrichedCalendar = calendar.map((entry) => calendarStatus(entry, schedulerState));
-  const env = await readEnv();
   return {
     index,
     articles,
     calendar: enrichedCalendar,
     schedulerState,
+    lastSchedulerRun,
+    schedulerIntervalMs: SCHEDULER_INTERVAL_MS,
     activeJob,
     jobs: jobs.slice(-20).reverse(),
     hasDevtoKey: Boolean(env.DEVTO_API_KEY),
     hasHashnodeKey: Boolean(env.HASHNODE_API_KEY),
-    hasForemKey: Boolean(env.FOREM_API_KEY)
+    hasForemKey: Boolean(env.FOREM_API_KEY),
+    hasSupabase: supabaseEnabled
   };
 }
 
 function calendarStatus(entry, schedulerState) {
+  if (["completed", "failed"].includes(entry.status)) return entry;
   const completed = new Set(schedulerState.completed || []);
   const key = calendarKey(entry);
   const due = new Date(entry.date).getTime() <= Date.now();
@@ -163,6 +187,31 @@ async function listArticles() {
 
 function runAction(res, name, args, options = {}) {
   if (activeJob) return sendJson(res, 409, { error: `Busy: ${activeJob.name}` });
+  const job = startJob(name, args, options);
+  sendJson(res, 202, { job });
+}
+
+function startSchedulerLoop() {
+  if (process.env.RJS_AUTO_SCHEDULER === "false") {
+    lastSchedulerRun = {
+      status: "disabled",
+      checkedAt: new Date().toISOString()
+    };
+    return;
+  }
+  setInterval(runSchedulerTick, SCHEDULER_INTERVAL_MS);
+}
+
+function runSchedulerTick() {
+  if (schedulerRunning || activeJob) return;
+  schedulerRunning = true;
+  const job = startJob("Auto schedule", ["src/syndicate.mjs", "schedule"], { quietWhenIdle: true });
+  job.onComplete = () => {
+    schedulerRunning = false;
+  };
+}
+
+function startJob(name, args, options = {}) {
   const job = {
     id: Date.now(),
     name,
@@ -172,8 +221,7 @@ function runAction(res, name, args, options = {}) {
     stderr: ""
   };
   activeJob = job;
-  jobs.push(job);
-  sendJson(res, 202, { job });
+  if (!options.quietWhenIdle) jobs.push(job);
 
   const executable = options.runtime === "direct" ? args[0] : process.execPath;
   const finalArgs = options.runtime === "direct" ? args.slice(1) : args;
@@ -184,8 +232,41 @@ function runAction(res, name, args, options = {}) {
     job.status = code === 0 ? "completed" : "failed";
     job.code = code;
     job.finishedAt = new Date().toISOString();
+    lastSchedulerRun = name === "Auto schedule" ? schedulerSummary(job) : lastSchedulerRun;
+    if (options.quietWhenIdle && shouldRecordQuietJob(job)) jobs.push(job);
+    if (job.onComplete) job.onComplete(job);
     activeJob = null;
   });
+  return job;
+}
+
+function shouldRecordQuietJob(job) {
+  if (job.status !== "completed") return true;
+  return !/No due schedule entries\./.test(job.stdout || "");
+}
+
+function schedulerSummary(job) {
+  return {
+    status: job.status,
+    checkedAt: job.finishedAt || new Date().toISOString(),
+    code: job.code,
+    message: summarizeSchedulerOutput(job)
+  };
+}
+
+function summarizeSchedulerOutput(job) {
+  if (job.stderr) return job.stderr.trim().slice(0, 500);
+  const stdout = (job.stdout || "").trim();
+  if (!stdout) return "";
+  if (/No due schedule entries\./.test(stdout)) return "No due schedule entries.";
+  try {
+    const results = JSON.parse(stdout);
+    const total = Array.isArray(results) ? results.length : 0;
+    const failed = Array.isArray(results) ? results.filter((entry) => entry.status === "failed").length : 0;
+    return `${total} due item(s) processed${failed ? `, ${failed} failed` : ""}.`;
+  } catch {
+    return stdout.slice(0, 500);
+  }
 }
 
 async function serveStatic(res, pathname) {
@@ -228,16 +309,16 @@ async function exists(path) {
 }
 
 async function readEnv() {
+  const env = { ...process.env };
   try {
-    const env = {};
     const text = await readFile(join(ROOT, ".env"), "utf8");
     for (const line of text.split(/\r?\n/)) {
       const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (match) env[match[1]] = match[2];
+      if (match) env[match[1]] = match[2].replace(/^["']|["']$/g, "");
     }
     return env;
   } catch {
-    return {};
+    return env;
   }
 }
 
@@ -286,8 +367,17 @@ function apiConfigured(platform, env) {
   }[platform] || false;
 }
 
-function calendarKey(entry) {
-  return `${entry.date}|${entry.slug}|${entry.platform}|${entry.action || "manual"}`;
+async function safeListScheduledPosts(env) {
+  try {
+    return await listScheduledPosts(env);
+  } catch (error) {
+    lastSchedulerRun = {
+      status: "failed",
+      checkedAt: new Date().toISOString(),
+      message: `Supabase calendar unavailable: ${error.message}`
+    };
+    return [];
+  }
 }
 
 function mediumClipboardContent(markdown) {

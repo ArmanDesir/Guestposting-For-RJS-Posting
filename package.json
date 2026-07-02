@@ -10,6 +10,7 @@
     "queue": "node src/syndicate.mjs queue",
     "draft": "node src/syndicate.mjs draft",
     "schedule": "node src/syndicate.mjs schedule",
+    "sync-calendar": "node src/syndicate.mjs sync-calendar",
     "ui": "node src/server.mjs",
     "all": "node src/syndicate.mjs all",
     "check": "node src/syndicate.mjs check"

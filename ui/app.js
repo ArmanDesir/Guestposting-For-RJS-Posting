@@ -3,6 +3,7 @@ const MANUAL_METHOD = "Manual platforms use the Medium-style flow: prepare conte
 const els = {
   summary: document.querySelector("#summary"),
   devtoKey: document.querySelector("#devtoKey"),
+  scheduleStorage: document.querySelector("#scheduleStorage"),
   articleCount: document.querySelector("#articleCount"),
   activeJob: document.querySelector("#activeJob"),
   articles: document.querySelector("#articles"),
@@ -25,9 +26,9 @@ const els = {
 let state = null;
 let selectedSlug = "";
 let noticeTimer = null;
+let localLoading = false;
 
 async function refresh({ quiet = false } = {}) {
-  if (!quiet) setLoading(true);
   try {
     const response = await fetch("/api/status");
     state = await response.json();
@@ -36,7 +37,7 @@ async function refresh({ quiet = false } = {}) {
   } catch (error) {
     showNotice("Could not load dashboard status.", "error");
   } finally {
-    if (!quiet) setLoading(false);
+    if (!quiet && !state?.activeJob && !localLoading) setLoading(false);
   }
 }
 
@@ -45,6 +46,7 @@ function render() {
   els.articleCount.textContent = articles.length;
   els.devtoKey.textContent = state.hasDevtoKey ? "Configured" : "Missing";
   els.devtoKey.className = state.hasDevtoKey ? "" : "error";
+  els.scheduleStorage.textContent = state.hasSupabase ? "Supabase" : "Local";
   els.activeJob.textContent = state.activeJob ? state.activeJob.name : "Idle";
   els.summary.textContent = state.index ? `${state.index.count} newsroom articles pulled from April 2026 onward.` : "Run Pull Latest to build the local archive.";
 
@@ -55,6 +57,7 @@ function render() {
   renderCalendar();
   renderLog();
   setBusyState(Boolean(state.activeJob));
+  syncJobLoader();
 }
 
 function renderArticleOptions(articles) {
@@ -182,6 +185,7 @@ function currentArticle() {
 }
 
 async function run(path, body = null, loadingText = "Working...") {
+  localLoading = true;
   setLoading(true, loadingText);
   try {
     const response = await fetch(path, {
@@ -197,7 +201,8 @@ async function run(path, body = null, loadingText = "Working...") {
     showNotice(payload.message || "Action started.", "success");
     await refresh({ quiet: true });
   } finally {
-    setLoading(false);
+    localLoading = false;
+    syncJobLoader();
   }
 }
 
@@ -215,6 +220,7 @@ async function addSchedule(event) {
     date: isoDate
   };
 
+  localLoading = true;
   setLoading(true, "Adding schedule...");
   try {
     const response = await fetch("/api/calendar", {
@@ -230,11 +236,13 @@ async function addSchedule(event) {
     await refresh({ quiet: true });
     showNotice(`Scheduled ${currentArticle()?.title || slug} for ${platformLabel(body.platform)}.`, "success");
   } finally {
-    setLoading(false);
+    localLoading = false;
+    syncJobLoader();
   }
 }
 
 async function prepareMedium(slug) {
+  localLoading = true;
   setLoading(true, "Preparing Medium copy...");
   try {
     const response = await fetch(`/api/platform/medium?slug=${encodeURIComponent(slug)}`);
@@ -249,7 +257,8 @@ async function prepareMedium(slug) {
   } catch {
     showNotice("Could not copy Medium content. Check browser clipboard permission.", "error");
   } finally {
-    setLoading(false);
+    localLoading = false;
+    syncJobLoader();
   }
 }
 
@@ -285,6 +294,14 @@ function showInlineNotice(message) {
 function setLoading(active, text = "Working...") {
   els.loader.hidden = !active;
   els.loader.querySelector("span").textContent = text;
+}
+
+function syncJobLoader() {
+  if (state?.activeJob) {
+    setLoading(true, `Working: ${state.activeJob.name}`);
+    return;
+  }
+  if (!localLoading) setLoading(false);
 }
 
 function formatJob(job) {
