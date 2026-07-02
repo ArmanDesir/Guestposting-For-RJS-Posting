@@ -340,18 +340,19 @@ async function createDraftFromArgs(options) {
 async function exportPlatformDrafts(article) {
   const platformsDir = join(article.dir, "platforms");
   await mkdir(platformsDir, { recursive: true });
-  const body = stripExistingCanonical(article.markdown);
+  const body = cleanSyndicationMarkdown(stripExistingCanonical(article.markdown));
   const mediumBody = prepareMediumBody(article, body);
+  const manualBody = prepareManualBody(article, body);
   const devtoBody = await prepareDevtoBody(article, body);
 
   const exports = {
     devto: devtoDraft(article, devtoBody),
     medium: mediumDraft(article, mediumBody),
-    hashnode: hashnodeDraft(article, body),
-    tumblr: tumblrDraft(article, body),
-    hubspot: manualPlatformDraft(article, body, "hubspot"),
-    substack: manualPlatformDraft(article, body, "substack"),
-    quora: manualPlatformDraft(article, body, "quora")
+    hashnode: hashnodeDraft(article, manualBody),
+    tumblr: tumblrDraft(article, manualBody),
+    hubspot: manualPlatformDraft(article, manualBody, "hubspot"),
+    substack: manualPlatformDraft(article, manualBody, "substack"),
+    quora: manualPlatformDraft(article, manualBody, "quora")
   };
 
   for (const [platform, content] of Object.entries(exports)) {
@@ -360,6 +361,10 @@ async function exportPlatformDrafts(article) {
 }
 
 function prepareMediumBody(article, body) {
+  return replaceImageMarkdown(body, article, (sourceUrl) => imageProxyUrl(sourceUrl, "png"));
+}
+
+function prepareManualBody(article, body) {
   return replaceImageMarkdown(body, article, (sourceUrl) => imageProxyUrl(sourceUrl, "png"));
 }
 
@@ -899,6 +904,8 @@ function parseStartDate(value) {
 function htmlToMarkdown(html, articleDir) {
   let out = html;
   out = out.replace(/\r/g, "");
+  out = out.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
+  out = out.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
   out = out.replace(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/gi, "\n_$1_\n");
   out = out.replace(/<figure[^>]*>/gi, "\n\n").replace(/<\/figure>/gi, "\n\n");
   out = out.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level, text) => `\n\n${"#".repeat(Number(level))} ${inline(text)}\n\n`);
@@ -911,7 +918,10 @@ function htmlToMarkdown(html, articleDir) {
     const local = imageMarkdownPath(src, articleDir);
     return local ? `\n\n![${escapeMd(alt)}](${local})\n\n` : "";
   });
-  out = out.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, text) => `[${inline(text)}](${absolutize(decodeHtml(href))})`);
+  out = out.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, text) => {
+    const label = inline(text);
+    return label ? `[${label}](${absolutize(decodeHtml(href))})` : "";
+  });
   out = out.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, (_, _tag, text) => `**${inline(text)}**`);
   out = out.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, (_, _tag, text) => `_${inline(text)}_`);
   out = out.replace(/<br\s*\/?>/gi, "\n");
@@ -920,6 +930,16 @@ function htmlToMarkdown(html, articleDir) {
   out = decodeHtml(out);
   out = out.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   return out.trim();
+}
+
+function cleanSyndicationMarkdown(markdown) {
+  return String(markdown)
+    .replace(/^\s*\.[^{\n]+?\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*$/gm, "")
+    .replace(/^\s*(?:\.wp-block-|\.kb-|\.kt-|\.has-|\.is-|\.align)[\s\S]*?(?=\n#{1,6}\s|\n[A-Z][^\n]{2,120}\n|\n> |\n---|\n\n\n|$)/gm, "")
+    .replace(/\[\]\([^)]+\)/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function inline(html) {
