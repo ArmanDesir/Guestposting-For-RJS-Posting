@@ -111,12 +111,13 @@ function renderArticles(articles) {
   });
 
   els.articles.innerHTML = filtered.map((article) => `
-    <button class="article-row ${article.slug === selectedSlug ? "selected" : ""}" data-select="${escapeAttr(article.slug)}" type="button">
-      <span>
+    <div class="article-row ${article.slug === selectedSlug ? "selected" : ""}">
+      <button data-select="${escapeAttr(article.slug)}" type="button">
         <strong>${escapeHtml(article.title)}</strong>
         <small>${formatDate(article.date)}</small>
-      </span>
-    </button>
+      </button>
+      <a class="button-link small" href="${escapeAttr(article.originalUrl)}" target="_blank" rel="noreferrer">Source</a>
+    </div>
   `).join("");
 
   for (const button of document.querySelectorAll("[data-select]")) {
@@ -141,6 +142,7 @@ function renderPreview() {
     <div class="preview-actions">
       <button type="button" data-devto="${escapeAttr(article.slug)}">DEV.to draft</button>
       <button type="button" data-medium="${escapeAttr(article.slug)}">Copy Medium</button>
+      <a class="button-link" href="${escapeAttr(article.originalUrl)}" target="_blank" rel="noreferrer">Source article</a>
     </div>
   `;
 
@@ -187,6 +189,9 @@ function renderCalendar() {
   for (const button of document.querySelectorAll("[data-cancel-schedule]")) {
     button.addEventListener("click", () => deleteScheduleIds([button.dataset.cancelSchedule], "Removing schedule entry..."));
   }
+  for (const button of document.querySelectorAll("[data-cancel-manual-schedule]")) {
+    button.addEventListener("click", () => showManualCancelWarning(button.dataset.cancelManualSchedule));
+  }
   for (const checkbox of document.querySelectorAll("[data-select-schedule]")) {
     checkbox.addEventListener("change", () => toggleScheduleSelection(checkbox.dataset.selectSchedule, checkbox.checked));
   }
@@ -204,10 +209,11 @@ function renderCalendar() {
 function renderCalendarItem(entry) {
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
   const isActive = ["pending", "due"].includes(entry.status);
-  const buttonLabel = isActive ? "Cancel" : "Remove";
+  const manualActive = isActive && isManualEntry(entry);
+  const buttonLabel = isActive ? (manualActive ? "Cancel post" : "Cancel") : "Remove";
   const error = entry.lastError ? `<span class="calendar-error">${escapeHtml(entry.lastError)}</span>` : "";
   const postUrl = postUrlForEntry(entry);
-  const manualControls = isActive && isManualEntry(entry) ? `
+  const manualControls = manualActive ? `
     <button type="button" class="small" data-open-manual="${escapeAttr(entry.id)}">Open</button>
     <button type="button" class="small success" data-record-manual="${escapeAttr(entry.id)}">Record success</button>
   ` : "";
@@ -228,14 +234,16 @@ function renderCalendarItem(entry) {
         <b>${escapeHtml(statusLabel(entry))}</b>
         ${openPostControl}
         ${manualControls}
-        <button type="button" class="danger small" data-cancel-schedule="${escapeAttr(entry.id)}">${buttonLabel}</button>
+        <button type="button" class="danger small" ${manualActive ? `data-cancel-manual-schedule="${escapeAttr(entry.id)}"` : `data-cancel-schedule="${escapeAttr(entry.id)}"`}>${buttonLabel}</button>
       </div>
     </div>
   `;
 }
 
 function renderPlanner() {
-  const entries = [...(state.calendar || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const entries = [...(state.calendar || [])]
+    .filter((entry) => entry.status !== "cancelled")
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
   const visibleDays = plannerDays();
 
   const days = new Map();
@@ -609,7 +617,7 @@ function closeManualModal() {
 async function openPendingManualEntry() {
   if (!pendingManualEntry) return;
   const entry = pendingManualEntry;
-  closeManualModal();
+  if (pendingManualMode !== "cancel") closeManualModal();
   await prepareManualPlatform(entry.platform, entry.slug);
 }
 

@@ -23,6 +23,7 @@
     <nav class="view-tabs">
       <button type="button" class="selected" data-view-tab="dashboard">Dashboard</button>
       <button type="button" data-view-tab="planner">Calendar</button>
+      <button type="button" data-view-tab="cancelled">Cancelled</button>
     </nav>
 
     <section class="status-strip">
@@ -152,6 +153,21 @@
         </div>
       </div>
       <div id="history" class="calendar-list"></div>
+    </section>
+
+    <section class="panel cancelled-panel" data-view="cancelled" hidden>
+      <div class="section-row">
+        <div>
+          <h2>Cancelled Posts</h2>
+          <p class="hint">Manual and scheduled posts that were cancelled are recorded here.</p>
+        </div>
+        <div class="bulk-actions">
+          <button type="button" class="small" id="selectCancelledBtn">Select all</button>
+          <button type="button" class="small" id="clearCancelledBtn">Clear selection</button>
+          <button type="button" class="danger small" id="deleteCancelledBtn">Remove selected</button>
+        </div>
+      </div>
+      <div id="cancelled" class="calendar-list full-list"></div>
     </section>
 
     <section class="panel log-panel" data-view="dashboard">

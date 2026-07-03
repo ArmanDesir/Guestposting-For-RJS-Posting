@@ -171,16 +171,55 @@ function supabaseServerKey(env) {
 }
 
 async function updateScheduledPost(entry, patch, env) {
-  const id = encodeURIComponent(entry.id || calendarKey(entry));
-  await supabaseRequest(
-    `/${CALENDAR_TABLE}?id=eq.${id}`,
-    {
-      method: "PATCH",
-      headers: { "prefer": "return=minimal" },
-      body: JSON.stringify(patch)
-    },
+  const id = entry.id || calendarKey(entry);
+  const rows = await updateScheduledPostById(id, patch, env);
+  if (rows?.length) return rows;
+
+  const fallbackRows = await updateScheduledPostByParts(id, patch, env);
+  if (fallbackRows?.length) return fallbackRows;
+
+  const error = new Error("Schedule entry was not found.");
+  error.status = 404;
+  throw error;
+}
+
+async function updateScheduledPostById(id, patch, env) {
+  return supabaseRequest(
+    `/${CALENDAR_TABLE}?id=eq.${encodeURIComponent(id)}`,
+    updateOptions(patch),
     env
   );
+}
+
+async function updateScheduledPostByParts(id, patch, env) {
+  const [rawDate, slug, platform, action = "manual"] = String(id).split("|");
+  if (!rawDate || !slug || !platform) return [];
+  const date = new Date(rawDate);
+  const dateCandidates = [
+    rawDate,
+    Number.isNaN(date.getTime()) ? "" : date.toISOString(),
+    Number.isNaN(date.getTime()) ? "" : date.toISOString().replace(".000Z", "+00:00")
+  ].filter(Boolean);
+
+  for (const candidate of [...new Set(dateCandidates)]) {
+    const query = [
+      `date=eq.${encodeURIComponent(candidate)}`,
+      `slug=eq.${encodeURIComponent(slug)}`,
+      `platform=eq.${encodeURIComponent(platform)}`,
+      `action=eq.${encodeURIComponent(action)}`
+    ].join("&");
+    const rows = await supabaseRequest(`/${CALENDAR_TABLE}?${query}`, updateOptions(patch), env);
+    if (rows?.length) return rows;
+  }
+  return [];
+}
+
+function updateOptions(patch) {
+  return {
+    method: "PATCH",
+    headers: { "prefer": "return=representation" },
+    body: JSON.stringify(patch)
+  };
 }
 
 function calendarEntryToRow(entry) {

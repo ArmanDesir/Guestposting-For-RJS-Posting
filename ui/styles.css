@@ -111,6 +111,26 @@ button.small {
   font-size: 12px;
 }
 
+.button-link {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--text);
+  padding: 0 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.button-link.small {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
 button:disabled {
   opacity: .55;
   cursor: not-allowed;
@@ -209,20 +229,29 @@ input[type="search"] {
 }
 
 .article-row {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   min-height: auto;
   padding: 12px 14px;
-  border: 0;
   border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  text-align: left;
   background: white;
 }
 
 .article-row:hover,
 .article-row.selected {
   background: #eef7f1;
+}
+
+.article-row button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .article-row strong,
