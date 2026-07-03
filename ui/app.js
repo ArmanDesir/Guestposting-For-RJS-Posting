@@ -27,8 +27,12 @@ const els = {
   selectHistoryBtn: document.querySelector("#selectHistoryBtn"),
   clearHistoryBtn: document.querySelector("#clearHistoryBtn"),
   deleteHistoryBtn: document.querySelector("#deleteHistoryBtn"),
+  selectCancelledBtn: document.querySelector("#selectCancelledBtn"),
+  clearCancelledBtn: document.querySelector("#clearCancelledBtn"),
+  deleteCancelledBtn: document.querySelector("#deleteCancelledBtn"),
   calendar: document.querySelector("#calendar"),
   history: document.querySelector("#history"),
+  cancelled: document.querySelector("#cancelled"),
   planner: document.querySelector("#planner"),
   plannerMode: document.querySelector("#plannerMode"),
   plannerMonth: document.querySelector("#plannerMonth"),
@@ -180,11 +184,13 @@ function isManualEntry(entry) {
 function renderCalendar() {
   const calendar = state.calendar || [];
   const activeEntries = calendar.filter((entry) => !isFinalStatus(entry.status));
-  const historyEntries = calendar.filter((entry) => isFinalStatus(entry.status)).reverse();
+  const historyEntries = calendar.filter((entry) => ["completed", "failed"].includes(entry.status)).reverse();
+  const cancelledEntries = calendar.filter((entry) => entry.status === "cancelled").reverse();
   pruneSelectedScheduleIds(calendar);
   els.calendar.innerHTML = activeEntries.length ? activeEntries.map(renderCalendarItem).join("") : `<div class="empty">No pending scheduled posts.</div>`;
-  els.history.innerHTML = historyEntries.length ? historyEntries.map(renderCalendarItem).join("") : `<div class="empty">No completed, cancelled, or failed schedule entries yet.</div>`;
-  updateBulkButtons(activeEntries, historyEntries);
+  els.history.innerHTML = historyEntries.length ? historyEntries.map(renderCalendarItem).join("") : `<div class="empty">No completed or failed schedule entries yet.</div>`;
+  els.cancelled.innerHTML = cancelledEntries.length ? cancelledEntries.map(renderCalendarItem).join("") : `<div class="empty">No cancelled posts yet.</div>`;
+  updateBulkButtons(activeEntries, historyEntries, cancelledEntries);
 
   for (const button of document.querySelectorAll("[data-cancel-schedule]")) {
     button.addEventListener("click", () => deleteScheduleIds([button.dataset.cancelSchedule], "Removing schedule entry..."));
@@ -371,17 +377,22 @@ function toggleScheduleSelection(id, selected) {
   renderCalendar();
 }
 
-function updateBulkButtons(activeEntries, historyEntries) {
+function updateBulkButtons(activeEntries, historyEntries, cancelledEntries) {
   const activeSelected = selectedCount(activeEntries);
   const historySelected = selectedCount(historyEntries);
+  const cancelledSelected = selectedCount(cancelledEntries);
   els.deleteScheduledBtn.textContent = activeSelected ? `Cancel selected (${activeSelected})` : "Cancel selected";
   els.deleteHistoryBtn.textContent = historySelected ? `Remove selected (${historySelected})` : "Remove selected";
+  els.deleteCancelledBtn.textContent = cancelledSelected ? `Remove selected (${cancelledSelected})` : "Remove selected";
   els.deleteScheduledBtn.disabled = activeSelected === 0;
   els.deleteHistoryBtn.disabled = historySelected === 0;
+  els.deleteCancelledBtn.disabled = cancelledSelected === 0;
   els.selectScheduledBtn.disabled = activeEntries.length === 0;
   els.clearScheduledBtn.disabled = activeSelected === 0;
   els.selectHistoryBtn.disabled = historyEntries.length === 0;
   els.clearHistoryBtn.disabled = historySelected === 0;
+  els.selectCancelledBtn.disabled = cancelledEntries.length === 0;
+  els.clearCancelledBtn.disabled = cancelledSelected === 0;
 }
 
 function selectedCount(entries) {
@@ -408,7 +419,8 @@ function updateBulkButtonsFromState() {
   const calendar = state.calendar || [];
   updateBulkButtons(
     calendar.filter((entry) => !isFinalStatus(entry.status)),
-    calendar.filter((entry) => isFinalStatus(entry.status))
+    calendar.filter((entry) => ["completed", "failed"].includes(entry.status)),
+    calendar.filter((entry) => entry.status === "cancelled")
   );
 }
 
@@ -486,13 +498,19 @@ async function cancelSchedule(id) {
 async function deleteSelectedSchedules(scope) {
   const entries = state.calendar || [];
   const scopedEntries = entries.filter((entry) => {
-    const isHistory = isFinalStatus(entry.status);
-    return scope === "history" ? isHistory : !isHistory;
+    if (scope === "history") return ["completed", "failed"].includes(entry.status);
+    if (scope === "cancelled") return entry.status === "cancelled";
+    return !isFinalStatus(entry.status);
   });
   const ids = scopedEntries.map((entry) => entry.id).filter((id) => selectedScheduleIds.has(id));
   if (!ids.length) return showNotice("Select at least one schedule entry.", "error");
 
-  await deleteScheduleIds(ids, scope === "history" ? "Removing selected history..." : "Cancelling selected schedules...");
+  const loadingText = {
+    history: "Removing selected history...",
+    cancelled: "Removing selected cancelled posts...",
+    active: "Cancelling selected schedules..."
+  }[scope] || "Removing selected entries...";
+  await deleteScheduleIds(ids, loadingText);
 }
 
 async function deleteScheduleIds(ids, loadingText) {
@@ -522,8 +540,12 @@ async function deleteScheduleIds(ids, loadingText) {
 function selectScheduleScope(scope, selected) {
   const entries = state.calendar || [];
   for (const entry of entries) {
-    const isHistory = isFinalStatus(entry.status);
-    if ((scope === "history" && isHistory) || (scope === "active" && !isHistory)) {
+    const inScope = (
+      (scope === "history" && ["completed", "failed"].includes(entry.status)) ||
+      (scope === "cancelled" && entry.status === "cancelled") ||
+      (scope === "active" && !isFinalStatus(entry.status))
+    );
+    if (inScope) {
       if (selected) selectedScheduleIds.add(entry.id);
       else selectedScheduleIds.delete(entry.id);
     }
@@ -945,6 +967,9 @@ els.deleteScheduledBtn.addEventListener("click", () => deleteSelectedSchedules("
 els.selectHistoryBtn.addEventListener("click", () => selectScheduleScope("history", true));
 els.clearHistoryBtn.addEventListener("click", () => selectScheduleScope("history", false));
 els.deleteHistoryBtn.addEventListener("click", () => deleteSelectedSchedules("history"));
+els.selectCancelledBtn.addEventListener("click", () => selectScheduleScope("cancelled", true));
+els.clearCancelledBtn.addEventListener("click", () => selectScheduleScope("cancelled", false));
+els.deleteCancelledBtn.addEventListener("click", () => deleteSelectedSchedules("cancelled"));
 els.manualCancelBtn.addEventListener("click", closeManualModal);
 els.manualConfirmSuccessBtn.addEventListener("click", confirmManualSuccess);
 els.manualConfirmCancelBtn.addEventListener("click", confirmManualCancelled);

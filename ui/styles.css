@@ -478,9 +478,18 @@ input[type="search"] {
 }
 
 .history-panel,
+.cancelled-panel,
 .planner-panel,
 .log-panel {
   margin-top: 14px;
+}
+
+.cancelled-panel {
+  padding: 14px;
+}
+
+.calendar-list.full-list {
+  max-height: calc(100vh - 235px);
 }
 
 .planner-panel {
