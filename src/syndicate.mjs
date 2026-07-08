@@ -458,6 +458,7 @@ async function runScheduler() {
   for (const entry of calendar) {
     const id = calendarKey(entry);
     if (completed.has(id)) continue;
+    if ((entry.action || "manual") === "manual") continue;
     if (!supabaseEnabled && new Date(entry.date).getTime() > now) continue;
     const result = await handleScheduleEntry(entry);
     results.push({ id, ...result });

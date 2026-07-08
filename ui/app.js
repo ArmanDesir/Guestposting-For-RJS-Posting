@@ -1,5 +1,7 @@
-const MANUAL_METHOD = "Manual platforms use the Medium-style flow: prepare content, copy/export it, then schedule inside the website.";
+const MANUAL_METHOD = "Manual platforms use the Medium-style flow: prepare content, copy/export it, then handle the final schedule or publish step inside the website.";
 const API_PLATFORMS = new Set(["devto"]);
+const MANUAL_SCHEDULE_PLATFORMS = new Set(["medium", "tumblr", "hubspot", "substack"]);
+const MANUAL_PUBLISH_ONLY_PLATFORMS = new Set(["hashnode", "quora"]);
 
 const els = {
   summary: document.querySelector("#summary"),
@@ -160,6 +162,8 @@ function renderActionOptions() {
   const platform = els.schedulePlatform.value;
   const isApiCapable = apiConfigured(platform);
   const options = [...els.scheduleAction.options];
+  const manualOption = options.find((option) => option.value === "manual");
+  if (manualOption) manualOption.textContent = manualModeLabel(platform);
   for (const option of options) {
     option.disabled = option.value !== "manual" && !isApiCapable;
   }
@@ -167,7 +171,7 @@ function renderActionOptions() {
     els.scheduleAction.value = "manual";
   }
   if (!isApiCapable) {
-    showInlineNotice(MANUAL_METHOD);
+    showInlineNotice(manualMethodNotice(platform));
   } else {
     showInlineNotice(`${platformLabel(platform)} can use API actions when credentials are configured. Manual schedule is still available.`);
   }
@@ -233,7 +237,7 @@ function renderCalendarItem(entry) {
       </label>
       <div>
         <strong>${escapeHtml(article?.title || entry.slug)}</strong>
-        <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)} - ${formatDateTime(entry.date)}</span>
+        <span>${platformLabel(entry.platform)} - ${entryActionLabel(entry)} - ${formatDateTime(entry.date)}</span>
         ${error}
       </div>
       <div class="calendar-controls">
@@ -346,7 +350,7 @@ function renderPlannerCard(entry) {
       <div class="planner-time">${escapeHtml(formatTime(entry.date))}</div>
       <div class="planner-body">
         <strong>${escapeHtml(article?.title || entry.slug)}</strong>
-        <span>${platformLabel(entry.platform)} - ${actionLabel(entry.action)}</span>
+        <span>${platformLabel(entry.platform)} - ${entryActionLabel(entry)}</span>
       </div>
       <b>${escapeHtml(statusLabel(entry))}</b>
       ${postUrl && isFinalStatus(entry.status) ? `
@@ -484,7 +488,7 @@ async function addSchedule(event) {
       return;
     }
     await refresh({ quiet: true });
-    showNotice(`Scheduled ${currentArticle()?.title || slug} for ${platformLabel(body.platform)}.`, "success");
+    showNotice(`${scheduleCreatedLabel(body)} ${currentArticle()?.title || slug} for ${platformLabel(body.platform)}.`, "success");
   } finally {
     localLoading = false;
     syncJobLoader();
@@ -569,7 +573,7 @@ async function prepareManualPlatform(platform, slug) {
     }
     await writeRichClipboard(payload);
     if (payload.openUrl) window.open(payload.openUrl, "_blank", "noopener,noreferrer");
-    showNotice(`${platformLabel(platform)} content copied. Schedule or publish manually, then record success here.`, "success");
+    showNotice(`${platformLabel(platform)} content copied. ${manualNextStepLabel(platform)} Then record success here.`, "success");
   } catch {
     showNotice(`Could not copy ${platformLabel(platform)} content. Check browser clipboard permission.`, "error");
   } finally {
@@ -584,7 +588,7 @@ function showManualWarning(id) {
   pendingManualEntry = entry;
   pendingManualMode = "open";
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
-  els.manualModalText.textContent = `${platformLabel(entry.platform)} does not have a working API connection. The draft will be copied and the platform page will open. After you schedule or publish it there, return here and click Record success for "${article?.title || entry.slug}".`;
+  els.manualModalText.textContent = `${platformLabel(entry.platform)} is a manual workflow. The draft will be copied and the platform page will open. ${manualModalNextStep(entry.platform)} Return here and click Record success for "${article?.title || entry.slug}" after the platform step is done.`;
   els.manualOpenBtn.textContent = "Copy and Open Platform";
   els.manualOpenBtn.hidden = false;
   els.manualPublishedUrlWrap.hidden = true;
@@ -600,7 +604,7 @@ function showManualSuccessWarning(id) {
   pendingManualEntry = entry;
   pendingManualMode = "success";
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
-  els.manualModalText.textContent = `Confirm that "${article?.title || entry.slug}" has been published or scheduled successfully on ${platformLabel(entry.platform)}. Paste the final post URL if you have it, so the calendar can open it later.`;
+  els.manualModalText.textContent = `Confirm that "${article?.title || entry.slug}" has been ${manualCompletionVerb(entry.platform)} on ${platformLabel(entry.platform)}. Paste the final post URL if you have it, so the calendar can open it later.`;
   els.manualPublishedUrlWrap.hidden = false;
   els.manualPublishedUrl.value = "";
   els.manualOpenBtn.hidden = true;
@@ -615,7 +619,7 @@ function showManualCancelWarning(id) {
   pendingManualEntry = entry;
   pendingManualMode = "cancel";
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
-  els.manualModalText.textContent = `Before recording this as cancelled, open ${platformLabel(entry.platform)} and cancel or remove the scheduled draft manually. After that, click Record Cancelled for "${article?.title || entry.slug}".`;
+  els.manualModalText.textContent = `${manualCancelInstruction(entry.platform)} After that, click Record Cancelled for "${article?.title || entry.slug}".`;
   els.manualOpenBtn.textContent = "Copy and Open Platform";
   els.manualOpenBtn.hidden = false;
   els.manualPublishedUrlWrap.hidden = true;
@@ -919,6 +923,56 @@ function actionLabel(value = "manual") {
     draft: "API draft",
     publish: "API publish"
   }[value] || value;
+}
+
+function manualModeLabel(platform) {
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) return "Manual publish reminder";
+  return "Manual schedule";
+}
+
+function manualMethodNotice(platform) {
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) {
+    return `${platformLabel(platform)} does not provide a reliable scheduling workflow for this system. Add it as a publish reminder, publish manually at the scheduled time, then record success here.`;
+  }
+  if (MANUAL_SCHEDULE_PLATFORMS.has(platform)) {
+    return `${platformLabel(platform)} is handled manually: copy/open the draft, schedule it inside the platform, then record success here.`;
+  }
+  return MANUAL_METHOD;
+}
+
+function manualNextStepLabel(platform) {
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) return "Publish manually at the reminder time.";
+  return "Schedule or publish manually inside the website.";
+}
+
+function manualModalNextStep(platform) {
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) {
+    return "Use this as a publish reminder because the platform does not support reliable scheduled publishing here.";
+  }
+  return "Schedule or publish it inside the platform.";
+}
+
+function manualCompletionVerb(platform) {
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) return "published manually";
+  return "scheduled or published successfully";
+}
+
+function manualCancelInstruction(platform) {
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) {
+    return `Before recording this as cancelled, confirm you will not publish this reminder on ${platformLabel(platform)}.`;
+  }
+  return `Before recording this as cancelled, open ${platformLabel(platform)} and cancel or remove the scheduled draft manually.`;
+}
+
+function entryActionLabel(entry) {
+  if ((entry.action || "manual") === "manual") return manualModeLabel(entry.platform);
+  return actionLabel(entry.action);
+}
+
+function scheduleCreatedLabel(entry) {
+  if ((entry.action || "manual") !== "manual") return "Scheduled";
+  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(entry.platform)) return "Added publish reminder for";
+  return "Added manual schedule for";
 }
 
 function escapeHtml(value) {

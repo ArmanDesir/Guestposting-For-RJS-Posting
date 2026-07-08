@@ -107,6 +107,7 @@ export async function listDueScheduledPosts(nowIso = new Date().toISOString(), e
   const query = [
     "select=*",
     "status=eq.pending",
+    "action=neq.manual",
     `date=lte.${encodeURIComponent(nowIso)}`,
     "order=date.asc"
   ].join("&");
