@@ -20,6 +20,7 @@ const SCHEDULER_STATE_FILE = join(ROOT, "data/scheduler-state.json");
 const PORT = Number(process.env.RJS_UI_PORT || 3077);
 const SCHEDULER_INTERVAL_MS = Number(process.env.RJS_SCHEDULER_INTERVAL_MS || 60_000);
 const ACTIVE_PLATFORMS = new Set(["devto", "medium", "hashnode", "tumblr", "hubspot", "substack", "quora"]);
+const PUBLISH_NOW_ONLY_PLATFORMS = new Set(["hashnode", "quora"]);
 const MANUAL_PLATFORM_URLS = {
   medium: "https://medium.com/new-story",
   hashnode: "https://hashnode.com/new",
@@ -486,12 +487,15 @@ function normalizeCalendarEntry(body, env = {}) {
   const slug = String(body.slug || "").trim();
   const platform = String(body.platform || "").trim().toLowerCase();
   const action = String(body.action || "manual").trim().toLowerCase();
-  const date = new Date(body.date);
+  const date = PUBLISH_NOW_ONLY_PLATFORMS.has(platform) ? new Date() : new Date(body.date);
   const actions = new Set(["manual", "draft", "publish"]);
   if (!isSafeSlug(slug)) return { error: "Missing or invalid article slug." };
   if (!ACTIVE_PLATFORMS.has(platform)) return { error: "Unsupported platform." };
   if (!actions.has(action)) return { error: "Unsupported schedule action." };
   if (Number.isNaN(date.getTime())) return { error: "Invalid schedule date." };
+  if (PUBLISH_NOW_ONLY_PLATFORMS.has(platform) && action !== "manual") {
+    return { error: `${platform} is publish-now only in this workflow. Use manual publish now.` };
+  }
   if (action !== "manual" && !apiConfigured(platform, env)) {
     return { error: `${platform} has no configured official API access. Use manual schedule for this platform.` };
   }
