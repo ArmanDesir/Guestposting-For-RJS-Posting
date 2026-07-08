@@ -32,6 +32,30 @@ export async function insertScheduledPost(entry, env = process.env) {
     return rowToCalendarEntry(rows[0]);
   } catch (error) {
     if (error.status === 409) {
+      const existingRows = await supabaseRequest(
+        `/${CALENDAR_TABLE}?id=eq.${encodeURIComponent(row.id)}&select=*`,
+        { method: "GET" },
+        env
+      );
+      const existing = existingRows?.[0] ? rowToCalendarEntry(existingRows[0]) : null;
+      if (existing && ["completed", "failed", "cancelled"].includes(existing.status)) {
+        const rows = await supabaseRequest(
+          `/${CALENDAR_TABLE}?id=eq.${encodeURIComponent(row.id)}`,
+          updateOptions({
+            date: row.date,
+            slug: row.slug,
+            platform: row.platform,
+            action: row.action,
+            status: "pending",
+            created_at: row.created_at,
+            completed_at: null,
+            last_error: null,
+            result: null
+          }),
+          env
+        );
+        return rowToCalendarEntry(rows[0]);
+      }
       const duplicate = new Error("This schedule entry already exists.");
       duplicate.status = 409;
       throw duplicate;

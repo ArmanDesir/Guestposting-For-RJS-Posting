@@ -92,7 +92,21 @@ async function handleApi(req, res, url) {
       }
     } else {
       const calendar = await readJson(CALENDAR_FILE, []);
-      if (calendar.some((item) => calendarKey(item) === calendarKey(entry))) {
+      const existingIndex = calendar.findIndex((item) => calendarKey(item) === calendarKey(entry));
+      if (existingIndex >= 0) {
+        const existing = calendar[existingIndex];
+        if (["completed", "failed", "cancelled"].includes(calendarStatus(existing, { completed: [] }).status)) {
+          calendar[existingIndex] = {
+            ...entry,
+            status: "pending",
+            completedAt: null,
+            lastError: null,
+            result: null
+          };
+          const updated = calendar.sort((a, b) => new Date(a.date) - new Date(b.date));
+          await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+          return sendJson(res, 200, { entry: calendar[existingIndex], calendar: updated, storage: "local", reactivated: true });
+        }
         return sendJson(res, 409, { error: "This schedule entry already exists." });
       }
       const updated = [...calendar, entry].sort((a, b) => new Date(a.date) - new Date(b.date));
