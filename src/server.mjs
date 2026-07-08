@@ -10,7 +10,8 @@ import {
   insertScheduledPost,
   isSupabaseConfigured,
   listScheduledPosts,
-  markScheduledPostCompletedById
+  markScheduledPostCompletedById,
+  markScheduledPostManuallyScheduledById
 } from "./supabase.mjs";
 
 const ROOT = resolve(".");
@@ -173,16 +174,22 @@ async function handleApi(req, res, url) {
     const publishedUrl = String(body.publishedUrl || "").trim();
     if (publishedUrl && !isValidHttpUrl(publishedUrl)) return sendJson(res, 400, { error: "Published URL must start with http:// or https://." });
     const env = await readEnv();
+    const scheduledDate = dateFromCalendarId(id);
+    const isFutureManual = scheduledDate && scheduledDate.getTime() > Date.now();
     const result = {
-      status: "manual-recorded",
+      status: isFutureManual ? "manual-scheduled" : "manual-recorded",
       platform: body.platform || "",
       publishedUrl,
       recordedAt: new Date().toISOString(),
-      note: "Manual schedule/publish confirmed by user."
+      note: isFutureManual ? "Manual platform schedule confirmed by user." : "Manual publish confirmed by user."
     };
 
     if (isSupabaseConfigured(env)) {
       try {
+        if (isFutureManual) {
+          await markScheduledPostManuallyScheduledById(id, result, env);
+          return sendJson(res, 200, { status: "scheduled", storage: "supabase" });
+        }
         await markScheduledPostCompletedById(id, result, env);
         return sendJson(res, 200, { status: "completed", storage: "supabase" });
       } catch (error) {
@@ -190,16 +197,17 @@ async function handleApi(req, res, url) {
       }
     }
 
-    const schedulerState = await readJson(SCHEDULER_STATE_FILE, { completed: [] });
-    const completed = [...new Set([...(schedulerState.completed || []), id])];
     const calendar = await readJson(CALENDAR_FILE, []);
     const updated = calendar.map((entry) => calendarKey(entry) === id ? {
       ...entry,
-      status: "completed",
-      completedAt: new Date().toISOString(),
+      status: isFutureManual ? "pending" : "completed",
+      completedAt: isFutureManual ? null : new Date().toISOString(),
       result
     } : entry);
     await writeFile(CALENDAR_FILE, JSON.stringify(updated, null, 2));
+    if (isFutureManual) return sendJson(res, 200, { status: "scheduled", storage: "local" });
+    const schedulerState = await readJson(SCHEDULER_STATE_FILE, { completed: [] });
+    const completed = [...new Set([...(schedulerState.completed || []), id])];
     await writeFile(SCHEDULER_STATE_FILE, JSON.stringify({ ...schedulerState, completed, updatedAt: new Date().toISOString() }, null, 2));
     return sendJson(res, 200, { status: "completed", storage: "local" });
   }
@@ -300,11 +308,24 @@ function calendarStatus(entry, schedulerState) {
   const completed = new Set(schedulerState.completed || []);
   const key = calendarKey(entry);
   const due = new Date(entry.date).getTime() <= Date.now();
+  if (entry.result?.status === "manual-scheduled" && due) {
+    return {
+      ...entry,
+      id: key,
+      status: "completed"
+    };
+  }
   return {
     ...entry,
     id: key,
     status: completed.has(key) ? "completed" : due ? "due" : "pending"
   };
+}
+
+function dateFromCalendarId(id) {
+  const [rawDate] = String(id || "").split("|");
+  const date = new Date(rawDate);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 async function listArticles() {

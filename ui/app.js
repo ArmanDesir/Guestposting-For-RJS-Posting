@@ -236,7 +236,7 @@ function renderCalendarItem(entry) {
   const postUrl = postUrlForEntry(entry);
   const manualControls = manualActive ? `
     <button type="button" class="small" data-open-manual="${escapeAttr(entry.id)}" data-slug="${escapeAttr(entry.slug)}" data-platform="${escapeAttr(entry.platform)}">Open</button>
-    <button type="button" class="small success" data-record-manual="${escapeAttr(entry.id)}">Record success</button>
+    <button type="button" class="small success" data-record-manual="${escapeAttr(entry.id)}">${escapeHtml(manualRecordButtonLabel(entry))}</button>
   ` : "";
   const openPostControl = postUrl && isFinalStatus(entry.status) ? `
     <button type="button" class="small" data-open-post="${escapeAttr(postUrl)}">Open post</button>
@@ -629,7 +629,7 @@ function showManualSuccessWarning(id) {
   pendingManualEntry = entry;
   pendingManualMode = "success";
   const article = (state.articles || []).find((item) => item.slug === entry.slug);
-  els.manualModalText.textContent = `Confirm that "${article?.title || entry.slug}" has been ${manualCompletionVerb(entry.platform)} on ${platformLabel(entry.platform)}. Paste the final post URL if you have it, so the calendar can open it later.`;
+  els.manualModalText.textContent = manualSuccessModalText(entry, article);
   els.manualPublishedUrlWrap.hidden = false;
   els.manualPublishedUrl.value = "";
   els.manualOpenBtn.hidden = true;
@@ -708,7 +708,7 @@ async function recordManualSuccess(id, publishedUrl = "") {
       return;
     }
     await refresh({ quiet: true });
-    showNotice(`${platformLabel(entry.platform)} manual schedule recorded.`, "success");
+    showNotice(manualRecordSuccessNotice(entry, payload.status), "success");
   } finally {
     localLoading = false;
     syncJobLoader();
@@ -816,6 +816,7 @@ function isFinalStatus(status) {
 }
 
 function statusLabel(entry) {
+  if (entry.result?.status === "manual-scheduled" && entry.status === "pending") return "Scheduled manually";
   if (entry.status === "completed") return "Success";
   if (entry.status === "cancelled") return "Cancelled";
   if (entry.status === "failed") return "Failed";
@@ -994,6 +995,27 @@ function manualModalNextStep(platform) {
 function manualCompletionVerb(platform) {
   if (manualPublishNowOnly(platform)) return "published manually";
   return "scheduled or published successfully";
+}
+
+function isFutureEntry(entry) {
+  return new Date(entry.date).getTime() > Date.now();
+}
+
+function manualRecordButtonLabel(entry) {
+  return isFutureEntry(entry) ? "Record scheduled" : "Record success";
+}
+
+function manualSuccessModalText(entry, article) {
+  const title = article?.title || entry.slug;
+  if (isFutureEntry(entry)) {
+    return `Confirm that "${title}" has been scheduled inside ${platformLabel(entry.platform)} for ${formatDateTime(entry.date)}. This keeps it pending until that scheduled time.`;
+  }
+  return `Confirm that "${title}" has been ${manualCompletionVerb(entry.platform)} on ${platformLabel(entry.platform)}. Paste the final post URL if you have it, so the calendar can open it later.`;
+}
+
+function manualRecordSuccessNotice(entry, status) {
+  if (status === "scheduled") return `${platformLabel(entry.platform)} manual schedule recorded.`;
+  return `${platformLabel(entry.platform)} manual publish recorded.`;
 }
 
 function manualCancelInstruction(platform) {

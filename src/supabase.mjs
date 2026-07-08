@@ -157,6 +157,15 @@ export async function markScheduledPostCompletedById(id, result, env = process.e
   }, env);
 }
 
+export async function markScheduledPostManuallyScheduledById(id, result, env = process.env) {
+  await updateScheduledPost({ id }, {
+    status: "pending",
+    completed_at: null,
+    last_error: null,
+    result
+  }, env);
+}
+
 export async function markScheduledPostFailed(entry, result, env = process.env) {
   await updateScheduledPost(entry, {
     status: "failed",
