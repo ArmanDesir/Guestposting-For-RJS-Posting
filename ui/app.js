@@ -97,13 +97,16 @@ function render() {
 }
 
 function renderArticleOptions(articles) {
-  const current = selectedSlug || els.scheduleSlug.value;
+  const current = els.scheduleSlug.value || selectedSlug;
   els.scheduleSlug.innerHTML = articles.map((article) => (
     `<option value="${escapeAttr(article.slug)}">${escapeHtml(article.title)}</option>`
   )).join("");
   if (current && articles.some((article) => article.slug === current)) {
     els.scheduleSlug.value = current;
     selectedSlug = current;
+  } else if (articles.length) {
+    els.scheduleSlug.value = articles[0].slug;
+    selectedSlug = articles[0].slug;
   }
   if (!els.scheduleDate.value) els.scheduleDate.value = defaultScheduleDate();
   if (!els.scheduleHour.options.length) populateTimeControls();
@@ -211,7 +214,10 @@ function renderCalendar() {
     checkbox.addEventListener("change", () => toggleScheduleSelection(checkbox.dataset.selectSchedule, checkbox.checked));
   }
   for (const button of document.querySelectorAll("[data-open-manual]")) {
-    button.addEventListener("click", () => showManualWarning(button.dataset.openManual));
+    button.addEventListener("click", () => showManualWarning(button.dataset.openManual, {
+      slug: button.dataset.slug,
+      platform: button.dataset.platform
+    }));
   }
   for (const button of document.querySelectorAll("[data-record-manual]")) {
     button.addEventListener("click", () => showManualSuccessWarning(button.dataset.recordManual));
@@ -229,7 +235,7 @@ function renderCalendarItem(entry) {
   const error = entry.lastError ? `<span class="calendar-error">${escapeHtml(entry.lastError)}</span>` : "";
   const postUrl = postUrlForEntry(entry);
   const manualControls = manualActive ? `
-    <button type="button" class="small" data-open-manual="${escapeAttr(entry.id)}">Open</button>
+    <button type="button" class="small" data-open-manual="${escapeAttr(entry.id)}" data-slug="${escapeAttr(entry.slug)}" data-platform="${escapeAttr(entry.platform)}">Open</button>
     <button type="button" class="small success" data-record-manual="${escapeAttr(entry.id)}">Record success</button>
   ` : "";
   const openPostControl = postUrl && isFinalStatus(entry.status) ? `
@@ -294,7 +300,10 @@ function renderPlanner() {
   `;
 
   for (const button of document.querySelectorAll("[data-planner-open]")) {
-    button.addEventListener("click", () => showManualWarning(button.dataset.plannerOpen));
+    button.addEventListener("click", () => showManualWarning(button.dataset.plannerOpen, {
+      slug: button.dataset.slug,
+      platform: button.dataset.platform
+    }));
   }
   for (const button of document.querySelectorAll("[data-planner-record]")) {
     button.addEventListener("click", () => showManualSuccessWarning(button.dataset.plannerRecord));
@@ -365,7 +374,7 @@ function renderPlannerCard(entry) {
       ` : ""}
       ${manual && active ? `
         <div class="planner-actions">
-          <button type="button" class="small" data-planner-open="${escapeAttr(entry.id)}">Open</button>
+          <button type="button" class="small" data-planner-open="${escapeAttr(entry.id)}" data-slug="${escapeAttr(entry.slug)}" data-platform="${escapeAttr(entry.platform)}">Open</button>
           <button type="button" class="danger small" data-planner-cancel="${escapeAttr(entry.id)}">Cancel post</button>
         </div>
       ` : ""}
@@ -440,7 +449,11 @@ function selectArticle(slug) {
 }
 
 function currentArticle() {
-  return (state.articles || []).find((article) => article.slug === selectedSlug || article.slug === els.scheduleSlug.value);
+  return articleBySlug(els.scheduleSlug.value || selectedSlug);
+}
+
+function articleBySlug(slug) {
+  return (state.articles || []).find((article) => article.slug === slug);
 }
 
 async function run(path, body = null, loadingText = "Working...") {
@@ -473,6 +486,7 @@ async function addSchedule(event) {
   const isoDate = publishNowOnly ? new Date().toISOString() : scheduleControlsToIso();
   if (!slug) return showNotice("Select an article before scheduling.", "error");
   if (!isoDate) return showNotice("Select a valid schedule date and time.", "error");
+  selectedSlug = slug;
 
   const body = {
     slug,
@@ -495,7 +509,7 @@ async function addSchedule(event) {
       return;
     }
     await refresh({ quiet: true });
-    showNotice(`${scheduleCreatedLabel(body)} ${currentArticle()?.title || slug} for ${platformLabel(body.platform)}.`, "success");
+    showNotice(`${scheduleCreatedLabel(body)} ${articleBySlug(slug)?.title || slug} for ${platformLabel(body.platform)}.`, "success");
   } finally {
     localLoading = false;
     syncJobLoader();
@@ -589,13 +603,17 @@ async function prepareManualPlatform(platform, slug) {
   }
 }
 
-function showManualWarning(id) {
+function showManualWarning(id, explicit = {}) {
   const entry = (state.calendar || []).find((item) => item.id === id);
   if (!entry) return showNotice("Schedule entry not found.", "error");
-  pendingManualEntry = entry;
+  pendingManualEntry = {
+    ...entry,
+    slug: explicit.slug || entry.slug,
+    platform: explicit.platform || entry.platform
+  };
   pendingManualMode = "open";
-  const article = (state.articles || []).find((item) => item.slug === entry.slug);
-  els.manualModalText.textContent = `${platformLabel(entry.platform)} is a manual workflow. The draft will be copied and the platform page will open. ${manualModalNextStep(entry.platform)} Return here and click Record success for "${article?.title || entry.slug}" after the platform step is done.`;
+  const article = articleBySlug(pendingManualEntry.slug);
+  els.manualModalText.textContent = `${platformLabel(pendingManualEntry.platform)} is a manual workflow. The draft will be copied and the platform page will open. ${manualModalNextStep(pendingManualEntry.platform)} Return here and click Record success for "${article?.title || pendingManualEntry.slug}" after the platform step is done.`;
   els.manualOpenBtn.textContent = "Copy and Open Platform";
   els.manualOpenBtn.hidden = false;
   els.manualPublishedUrlWrap.hidden = true;
