@@ -1,7 +1,7 @@
 const MANUAL_METHOD = "Manual platforms use the Medium-style flow: prepare content, copy/export it, then handle the final schedule or publish step inside the website.";
 const API_PLATFORMS = new Set(["devto"]);
 const MANUAL_SCHEDULE_PLATFORMS = new Set(["medium", "tumblr", "hubspot", "substack"]);
-const MANUAL_PUBLISH_ONLY_PLATFORMS = new Set(["hashnode", "quora"]);
+const MANUAL_PUBLISH_NOW_ONLY_PLATFORMS = new Set(["hashnode", "quora"]);
 
 const els = {
   summary: document.querySelector("#summary"),
@@ -161,6 +161,7 @@ function renderPreview() {
 function renderActionOptions() {
   const platform = els.schedulePlatform.value;
   const isApiCapable = apiConfigured(platform);
+  const publishNowOnly = manualPublishNowOnly(platform);
   const options = [...els.scheduleAction.options];
   const manualOption = options.find((option) => option.value === "manual");
   if (manualOption) manualOption.textContent = manualModeLabel(platform);
@@ -170,6 +171,10 @@ function renderActionOptions() {
   if (!isApiCapable && els.scheduleAction.value !== "manual") {
     els.scheduleAction.value = "manual";
   }
+  for (const control of [els.scheduleDate, els.scheduleHour, els.scheduleMinute, els.scheduleAmPm]) {
+    control.disabled = publishNowOnly;
+  }
+  if (publishNowOnly) setScheduleControlsToNow();
   if (!isApiCapable) {
     showInlineNotice(manualMethodNotice(platform));
   } else {
@@ -463,13 +468,15 @@ async function run(path, body = null, loadingText = "Working...") {
 async function addSchedule(event) {
   event.preventDefault();
   const slug = els.scheduleSlug.value.trim();
-  const isoDate = scheduleControlsToIso();
+  const platform = els.schedulePlatform.value;
+  const publishNowOnly = manualPublishNowOnly(platform);
+  const isoDate = publishNowOnly ? new Date().toISOString() : scheduleControlsToIso();
   if (!slug) return showNotice("Select an article before scheduling.", "error");
   if (!isoDate) return showNotice("Select a valid schedule date and time.", "error");
 
   const body = {
     slug,
-    platform: els.schedulePlatform.value,
+    platform,
     action: els.scheduleAction.value,
     date: isoDate
   };
@@ -850,10 +857,20 @@ function populateTimeControls() {
 function setDefaultScheduleTime() {
   const date = new Date(Date.now() + 24 * 60 * 60 * 1000);
   date.setMinutes(0, 0, 0);
+  setScheduleControlsFromDate(date);
+}
+
+function setScheduleControlsToNow() {
+  setScheduleControlsFromDate(new Date());
+}
+
+function setScheduleControlsFromDate(date) {
   const hour24 = date.getHours();
   const hour12 = hour24 % 12 || 12;
+  const minute = Math.floor(date.getMinutes() / 5) * 5;
+  els.scheduleDate.value = toDateInput(date);
   els.scheduleHour.value = String(hour12);
-  els.scheduleMinute.value = String(date.getMinutes()).padStart(2, "0");
+  els.scheduleMinute.value = String(minute).padStart(2, "0");
   els.scheduleAmPm.value = hour24 >= 12 ? "PM" : "AM";
 }
 
@@ -925,14 +942,18 @@ function actionLabel(value = "manual") {
   }[value] || value;
 }
 
+function manualPublishNowOnly(platform) {
+  return MANUAL_PUBLISH_NOW_ONLY_PLATFORMS.has(platform);
+}
+
 function manualModeLabel(platform) {
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) return "Manual publish reminder";
+  if (manualPublishNowOnly(platform)) return "Manual publish now";
   return "Manual schedule";
 }
 
 function manualMethodNotice(platform) {
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) {
-    return `${platformLabel(platform)} does not provide a reliable scheduling workflow for this system. Add it as a publish reminder, publish manually at the scheduled time, then record success here.`;
+  if (manualPublishNowOnly(platform)) {
+    return `${platformLabel(platform)} is publish-now only here. The date/time fields are disabled; publish manually now, then record success here.`;
   }
   if (MANUAL_SCHEDULE_PLATFORMS.has(platform)) {
     return `${platformLabel(platform)} is handled manually: copy/open the draft, schedule it inside the platform, then record success here.`;
@@ -941,25 +962,25 @@ function manualMethodNotice(platform) {
 }
 
 function manualNextStepLabel(platform) {
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) return "Publish manually at the reminder time.";
+  if (manualPublishNowOnly(platform)) return "Publish manually now.";
   return "Schedule or publish manually inside the website.";
 }
 
 function manualModalNextStep(platform) {
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) {
-    return "Use this as a publish reminder because the platform does not support reliable scheduled publishing here.";
+  if (manualPublishNowOnly(platform)) {
+    return "Publish it now because this platform is not supported for future scheduling in this system.";
   }
   return "Schedule or publish it inside the platform.";
 }
 
 function manualCompletionVerb(platform) {
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) return "published manually";
+  if (manualPublishNowOnly(platform)) return "published manually";
   return "scheduled or published successfully";
 }
 
 function manualCancelInstruction(platform) {
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(platform)) {
-    return `Before recording this as cancelled, confirm you will not publish this reminder on ${platformLabel(platform)}.`;
+  if (manualPublishNowOnly(platform)) {
+    return `Before recording this as cancelled, confirm you will not publish this post on ${platformLabel(platform)}.`;
   }
   return `Before recording this as cancelled, open ${platformLabel(platform)} and cancel or remove the scheduled draft manually.`;
 }
@@ -971,7 +992,7 @@ function entryActionLabel(entry) {
 
 function scheduleCreatedLabel(entry) {
   if ((entry.action || "manual") !== "manual") return "Scheduled";
-  if (MANUAL_PUBLISH_ONLY_PLATFORMS.has(entry.platform)) return "Added publish reminder for";
+  if (manualPublishNowOnly(entry.platform)) return "Added publish-now item for";
   return "Added manual schedule for";
 }
 
